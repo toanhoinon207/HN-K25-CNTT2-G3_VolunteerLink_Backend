@@ -22,3 +22,35 @@ class Item(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+class OrganizationStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class OrganizationTable(Base):
+    __tablename__ = "organizations"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    name = Column(String(255), unique=True, index=True, nullable=False)
+    description = Column(Text, nullable=True)
+    logo_url = Column(String(255), nullable=True)
+    address = Column(Text, nullable=False)
+    contact_email = Column(String(255), nullable=False)
+    contact_phone = Column(String(50), nullable=False)
+    document_image_url = Column(String(255), nullable=False)
+    
+    
+    status = Column(Enum(OrganizationStatus), default=OrganizationStatus.PENDING, nullable=False)
+    rejection_reason = Column(Text, nullable=True)
+    
+   
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+   
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+   
+    owner = relationship("User", back_populates="organizations")
+    campaigns = relationship("Campaign", back_populates="organization", cascade="all, delete-orphan")
