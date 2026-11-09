@@ -3,7 +3,7 @@ from sqlalchemy import (
     Integer,
     String,
     Enum,
-    Decimal,
+    DECIMAL,
     ForeignKey
 )
 from sqlalchemy.orm import relationship
@@ -27,7 +27,7 @@ class HourClaimModel(Base):
     )
 
     claimed_hours = Column(
-        Decimal(6, 2),
+        DECIMAL(6, 2),
         nullable=False
     )
 
