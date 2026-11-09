@@ -1,3 +1,6 @@
 # Import mọi model ở đây để Base.metadata.create_all() "nhìn thấy" và tạo bảng.
 # Thêm model mới -> nhớ thêm 1 dòng import vào file này.
 from app.models.item import Item  # noqa: F401
+from app.models.users import UserModel
+from app.models.volunteer_profiles import VolunteerProfileModel
+from app.models.notifications import NotificationModel
