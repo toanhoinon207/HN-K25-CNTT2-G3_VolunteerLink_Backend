@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column,
-    BigInteger,
+    Integer,
     String,
     Text,
     Enum,
@@ -16,7 +16,7 @@ class CertificateModel(Base):
     __tablename__ = "certificates"
 
     id = Column(
-        BigInteger,
+        Integer,
         primary_key=True,
         autoincrement=True
     )
@@ -28,13 +28,13 @@ class CertificateModel(Base):
     )
 
     user_id = Column(
-        BigInteger,
+        Integer,
         ForeignKey("users.id"),
         nullable=False
     )
 
     campaign_id = Column(
-        BigInteger,
+        Integer,
         ForeignKey("campaigns.id"),
         nullable=False
     )
