@@ -1,5 +1,5 @@
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional
 
 
@@ -15,6 +15,4 @@ class RegistrationResponse(BaseModel):
     status: str
     message: Optional[str]
     rejection_reason: Optional[str]
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True) 

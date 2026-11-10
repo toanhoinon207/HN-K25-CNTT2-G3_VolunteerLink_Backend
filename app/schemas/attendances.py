@@ -24,5 +24,4 @@ class AttendanceUpdate(BaseModel):
 class AttendanceResponse(AttendanceBase):
     id: int
     registration_id: int
-
     model_config = ConfigDict(from_attributes=True)

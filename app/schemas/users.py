@@ -11,7 +11,6 @@ class UserCreate(BaseModel):
     full_name: str = Field(min_length=1, max_length=150)
     phone: str | None = Field(default=None, max_length=20)
 
-
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

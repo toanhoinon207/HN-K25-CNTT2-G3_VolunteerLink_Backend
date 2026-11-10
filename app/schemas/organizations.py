@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr, HttpUrl, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 import enum
 
 
@@ -20,30 +20,21 @@ class OrganizationBase(BaseModel):
     phone: str = Field(..., max_length=20, description="Số điện thoại")
     document_url: Optional[str] = Field(None, max_length=500, description="Tài liệu xác thực")
 
-
-
 class OrganizationCreate(OrganizationBase):
-    pass 
-
+    pass
 
 class OrganizationUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=255)
-    description: Optional[str] = Optional[str] = None
+    description: Optional[str] = None
     logo_url: Optional[str] = Field(None, max_length=500)
     address: Optional[str] = Field(None, max_length=255)
     email: Optional[EmailStr] = None
     phone: Optional[str] = Field(None, max_length=20)
     document_url: Optional[str] = Field(None, max_length=500)
-    status: Optional[OrganizationStatus] = None
-    rejection_reason: Optional[str] = None
-
-
 
 class OrganizationStatusUpdate(BaseModel):
     status: OrganizationStatus
     rejection_reason: Optional[str] = Field(None, description="Lý do từ chối nếu status là REJECTED")
-
-
 
 class OrganizationResponse(OrganizationBase):
     id: int
@@ -53,5 +44,4 @@ class OrganizationResponse(OrganizationBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True  
+    model_config = ConfigDict(from_attributes=True) 

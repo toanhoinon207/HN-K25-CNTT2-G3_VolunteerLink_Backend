@@ -14,7 +14,6 @@ class OrganizationStatus(str, enum.Enum):
 
 class OrganizationModel(Base):
     __tablename__ = "organizations"
-
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
@@ -24,12 +23,9 @@ class OrganizationModel(Base):
     phone = Column(String(20), nullable=False)
     document_url = Column(String(500), nullable=True) 
     status = Column(SQLEnum(OrganizationStatus), default=OrganizationStatus.PENDING, nullable=False)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False) 
+    owner_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False) 
     rejection_reason = Column(Text, nullable=True) 
-    
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
-
-   
-    owner = relationship("User", back_populates="organizations")
-    campaigns = relationship("Campaign", back_populates="organization", cascade="all, delete-orphan")
+    owner = relationship("UserModel", back_populates="organization")
+    campaigns = relationship("CampaignModel", back_populates="organization", cascade="all, delete-orphan")

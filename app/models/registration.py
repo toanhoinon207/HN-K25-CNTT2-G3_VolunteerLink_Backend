@@ -1,24 +1,21 @@
-
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
+from datetime import datetime, timezone
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, UniqueConstraint
 from app.db.session import Base
 from sqlalchemy.orm import relationship
 
+def utc_now():
+    return datetime.now(timezone.utc).replace(tzinfo = None)
 
 class RegistrationModel(Base):
     __tablename__ = "registrations"
 
     id = Column(Integer, primary_key=True, index=True)
-
-    user_id = Column(Integer, ForeignKey("users.id"))
-    campaign_id = Column(Integer, ForeignKey("campaigns.id"))
-
+    user_id = Column(Integer, ForeignKey("users.id"), nullable = False)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable = False)
     status = Column(String(20), default="PENDING")
-
     message = Column(Text, nullable=True)
     rejection_reason = Column(Text, nullable=True)
-
-    created_at = Column(DateTime)
-
+    created_at = Column(DateTime, nullable = False, default = utc_now)
     campaign = relationship('CampaignModel',back_populates="registrations") 
     user = relationship('UserModel',back_populates="registrations")
     attendance = relationship('AttendanceModel',back_populates="registration",uselist=False)

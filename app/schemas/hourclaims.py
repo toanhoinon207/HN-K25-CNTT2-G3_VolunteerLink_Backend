@@ -23,14 +23,10 @@ class HourClaimCreate(HourClaimBase):
 class HourClaimUpdate(BaseModel):
     claimed_hours: Optional[Decimal] = Field(None, ge=0)
     evidence_url: Optional[str] = Field(None, max_length=500)
-    status: Optional[HourClaimStatus] = None
     verified_by: Optional[int] = None
-
 
 class HourClaimResponse(HourClaimBase):
     id: int
     registration_id: int
     verified_by: Optional[int] = None
-
-    # Cấu hình để Pydantic đọc dữ liệu trực tiếp từ SQLAlchemy Model objects
     model_config = ConfigDict(from_attributes=True)

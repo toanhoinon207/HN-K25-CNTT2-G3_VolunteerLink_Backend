@@ -22,3 +22,6 @@ class UserModel(Base):
     notifications = relationship("NotificationModel", back_populates = "user")
     hour_claims = relationship("HourClaimModel", back_populates = "user")
     certificates = relationship("CertificateModel", back_populates = "user")
+    attendance = relationship("AttendanceModel", back_populates= "user")
+    organization = relationship("OrganizationModel", back_populates = "owner", uselist = False)
+    waitlist_entries = relationship("WaitlistEntryModel", back_populates = "user")
