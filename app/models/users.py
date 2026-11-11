@@ -1,10 +1,13 @@
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from sqlalchemy import Column, DateTime, Enum, Integer, String
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 
-def utc_now():
-    return datetime.now(timezone.utc).replace(tzinfo = None)
+def now_vietnam():
+    return datetime.now(
+        ZoneInfo("Asia/Ho_Chi_Minh")
+    ).replace(tzinfo=None)
 
 class UserModel(Base):
     __tablename__ = "users"
@@ -15,8 +18,8 @@ class UserModel(Base):
     phone = Column(String(20))
     role = Column(Enum("USER", "ORGANIZER", "ADMIN"), nullable = False, default = "USER")
     status = Column(Enum("ACTIVE", "LOCKED"), nullable = False, default = "ACTIVE")
-    created_at = Column(DateTime, nullable = False, default = utc_now)
-    updated_at = Column(DateTime, nullable = False, default = utc_now, onupdate = utc_now)
+    created_at = Column(DateTime, nullable = False, default = now_vietnam)
+    updated_at = Column(DateTime, nullable = False, default = now_vietnam, onupdate = now_vietnam)
     volunteer_profile = relationship("VolunteerProfileModel", back_populates = "user", uselist = False)
     registrations = relationship("RegistrationModel", back_populates = "user")
     notifications = relationship("NotificationModel", back_populates = "user")
