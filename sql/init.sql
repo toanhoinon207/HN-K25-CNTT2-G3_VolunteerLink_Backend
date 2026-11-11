@@ -21,3 +21,4 @@ CREATE TABLE IF NOT EXISTS items (
 INSERT INTO items (name, description, price) VALUES
   ('Cơm rang dưa bò', 'Món mẫu để kiểm tra API', 45000),
   ('Trà đá', 'Dữ liệu mẫu số 2', 5000);
+

@@ -13,7 +13,7 @@ from app import models  # noqa: F401 - import để SQLAlchemy biết các bản
 from app.core.config import settings
 from app.db.session import Base, engine
 
-from app.routers import health, items, auth ,registations,attendances,campaigns
+from app.routers import health, items, auth, registations, attendance, campaigns, organizations
 
 
 
@@ -50,7 +50,8 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(registations.router,prefix="/api")
 
 app.include_router(campaigns.router,prefix="/api")
-app.include_router(attendance.router,prefix="/api") 
+app.include_router(attendance.router,prefix="/api")
+app.include_router(organizations.router, prefix="/api")
 
 
 @app.get("/")
