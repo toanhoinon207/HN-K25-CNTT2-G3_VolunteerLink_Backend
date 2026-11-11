@@ -40,3 +40,15 @@ VALUES
     UTC_TIMESTAMP(),
     UTC_TIMESTAMP()
 );
+INSERT INTO users (email, password_hash, full_name, phone, role, status, created_at, updated_at)
+VALUES
+(
+    'organizer1@volunteerlink.com',
+    '$2b$12$rE6X/h//wfr21dYmAGjCCe7DMrDYltWO9cN11jEsox3TawFR7iwim',
+    'Nguyen Duc Toan',
+    '0900000004',
+    'ORGANIZER',
+    'ACTIVE',
+    UTC_TIMESTAMP(),
+    UTC_TIMESTAMP()
+);
