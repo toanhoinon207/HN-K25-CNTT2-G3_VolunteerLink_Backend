@@ -12,8 +12,8 @@ from sqlalchemy.exc import OperationalError
 from app import models  # noqa: F401 - import để SQLAlchemy biết các bảng
 from app.core.config import settings
 from app.db.session import Base, engine
-from app.routers import health, items, auth, attendances
-from app.routers import health, items, auth, campaigns
+
+from app.routers import health, items, auth ,registations,attendances,campaigns
 
 
 
@@ -46,8 +46,12 @@ app.add_middleware(
 # app.include_router(health.router, prefix="/api")
 # app.include_router(items.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
-app.include_router(campaigns.router)
+
+app.include_router(registations.router,prefix="/api")
+
+app.include_router(campaigns.router,prefix="/api")
 app.include_router(attendance.router,prefix="/api") 
+
 
 @app.get("/")
 def root():
