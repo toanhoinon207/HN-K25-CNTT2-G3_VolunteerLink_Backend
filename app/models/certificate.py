@@ -1,3 +1,6 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from sqlalchemy import (
     Column,
     Integer,
@@ -7,10 +10,15 @@ from sqlalchemy import (
     Numeric,
     DateTime,
     ForeignKey,
-    func
 )
 from sqlalchemy.orm import relationship
 from app.db.session import Base
+
+
+def now_vietnam():
+    return datetime.now(
+        ZoneInfo("Asia/Ho_Chi_Minh")
+    ).replace(tzinfo=None)
 
 class CertificateModel(Base):
     __tablename__ = "certificates"
@@ -47,7 +55,7 @@ class CertificateModel(Base):
     issued_at = Column(
         DateTime,
         nullable=False,
-        server_default=func.now()
+        default = now_vietnam 
     )
 
     status = Column(
