@@ -1,10 +1,13 @@
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 
-def utc_now():
-    return datetime.now(timezone.utc).replace(tzinfo = None)
+def now_vietnam():
+    return datetime.now(
+        ZoneInfo("Asia/Ho_Chi_Minh")
+    ).replace(tzinfo=None)
 
 class NotificationModel(Base):
     __tablename__ = "notifications"
@@ -14,5 +17,5 @@ class NotificationModel(Base):
     content = Column(Text, nullable = False)
     link = Column(String(500))
     is_read = Column(Boolean, nullable = False, default = False)
-    created_at = Column(DateTime, nullable = False, default = utc_now)
+    created_at = Column(DateTime, nullable = False, default = now_vietnam)
     user = relationship("UserModel", back_populates = "notifications")
