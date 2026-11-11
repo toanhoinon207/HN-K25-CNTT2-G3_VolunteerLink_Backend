@@ -1,10 +1,13 @@
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, UniqueConstraint
 from app.db.session import Base
 from sqlalchemy.orm import relationship
 
-def utc_now():
-    return datetime.now(timezone.utc).replace(tzinfo = None)
+def now_vietnam():
+    return datetime.now(
+        ZoneInfo("Asia/Ho_Chi_Minh")
+    ).replace(tzinfo=None)
 
 class RegistrationModel(Base):
     __tablename__ = "registrations"
@@ -15,7 +18,7 @@ class RegistrationModel(Base):
     status = Column(String(20), default="PENDING")
     message = Column(Text, nullable=True)
     rejection_reason = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable = False, default = utc_now)
+    created_at = Column(DateTime, nullable = False, default = now_vietnam)
     campaign = relationship('CampaignModel',back_populates="registrations") 
     user = relationship('UserModel',back_populates="registrations")
     attendance = relationship('AttendanceModel',back_populates="registration",uselist=False)
