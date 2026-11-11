@@ -1,11 +1,14 @@
 import enum
+from zoneinfo import ZoneInfo
 from sqlalchemy import Column, Integer, String, Text, Enum as SQLEnum, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from app.db.session import Base
 
-def utc_now():
-    return datetime.now(timezone.utc).replace(tzinfo = None)
+def now_vietnam():
+    return datetime.now(
+        ZoneInfo("Asia/Ho_Chi_Minh")
+    ).replace(tzinfo=None)
 
 class OrganizationStatus(str, enum.Enum):
     PENDING = "PENDING"
@@ -25,7 +28,7 @@ class OrganizationModel(Base):
     status = Column(SQLEnum(OrganizationStatus), default=OrganizationStatus.PENDING, nullable=False)
     owner_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False) 
     rejection_reason = Column(Text, nullable=True) 
-    created_at = Column(DateTime, default=utc_now)
-    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+    created_at = Column(DateTime, default=now_vietnam)
+    updated_at = Column(DateTime, default=now_vietnam, onupdate=now_vietnam)
     owner = relationship("UserModel", back_populates="organization")
     campaigns = relationship("CampaignModel", back_populates="organization", cascade="all, delete-orphan")

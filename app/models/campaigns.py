@@ -1,10 +1,13 @@
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from sqlalchemy import (Column, Integer, String, Text, DateTime, Float, ForeignKey, Enum)
 from sqlalchemy.orm import relationship
 from app.db.session import Base
 
-def utc_now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def now_vietnam():
+    return datetime.now(
+        ZoneInfo("Asia/Ho_Chi_Minh")
+    ).replace(tzinfo=None)
 
 class CampaignModel(Base):
     __tablename__ = "campaigns"
@@ -23,8 +26,15 @@ class CampaignModel(Base):
     estimated_hours = Column(Float, nullable=False)
     status = Column(Enum("DRAFT", "PENDING", "OPEN", "CLOSED", "COMPLETED", "CANCELLED", name="campaign_status"),nullable=False,default="DRAFT")
     reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=now_vietnam)
+    updated_at = Column(DateTime, default=now_vietnam, onupdate=now_vietnam)
+    attendance_code = Column(String(6),nullable=True,unique=True)
+    attendance_code_expires_at = Column(DateTime,nullable=True)
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+    attendance_code = Column(String(6),nullable=True,unique=True)
+    attendance_code_expires_at = Column(DateTime,nullable=True)
+    
     certificates = relationship("CertificateModel", back_populates="campaign")
     waitlist_entries = relationship("WaitlistEntryModel", back_populates="campaign")
     organization = relationship("OrganizationModel", back_populates="campaigns") 
