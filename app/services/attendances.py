@@ -43,7 +43,7 @@ def validate_campaign_time(campaign, now):
     if now > campaign.end_time:
         raise HTTPException(400, "Chiến dịch đã kết thúc")
 
-    if campaign.status in ("CANCELLED", "DRAFT", "PENDING"):
+    if campaign.status in ("CANCELLED", "DRAFT", "PENDING", "COMPLETED"):
         raise HTTPException(400, "Chiến dịch không cho phép điểm danh")
 
 
@@ -96,6 +96,12 @@ def create_attendance_code(db, data, current_user):
         validate_campaign_time(campaign, now)
 
         code = generate_code()
+        while db.query(CampaignModel).filter(
+            CampaignModel.attendance_code == code,
+            CampaignModel.id != campaign.id
+        ).first() is not None:
+            code = generate_code()
+
         expires_at = min(
             now + timedelta(minutes=data.expires_minutes),
             campaign.end_time

@@ -10,5 +10,5 @@ class AttendanceModel(Base):
     check_out_at = Column(DateTime, nullable=True)
     total_minutes = Column(Integer, default=0, nullable=False)
     recorded_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-    registration = relationship( "RegistrationModel", back_populates = "attendance")
-    user = relationship("UserModel", back_populates = "attendance")
+    registration = relationship("RegistrationModel", back_populates="attendance")
+    user = relationship("UserModel", back_populates="attendance")

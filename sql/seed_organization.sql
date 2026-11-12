@@ -1,9 +1,11 @@
+USE volunteerlink_db;
+
 INSERT INTO organizations (
-    id, name, description, logo_url, address, email, phone, document_url, status, owner_id, rejection_reason
+    id, name, description, logo_url, address, email, phone, document_url, status, owner_id, rejection_reason, created_at, updated_at
 ) VALUES 
 (
     1,
-    'Qũy Tình nguyện Xanh Việt Nam', 
+    'Quỹ Tình nguyện Xanh Việt Nam', 
     'Tổ chức phi lợi nhuận hoạt động vì môi trường, chuyên tổ chức các chiến dịch dọn rác, trồng cây gây rừng và bảo vệ nguồn nước sạch.', 
     'https://cdn.example.com/logos/xanh_vietnam.png', 
     'Số 15 phố Huế, Phường Hàng Bài, Quận Hoàn Kiếm, Hà Nội', 
@@ -11,8 +13,10 @@ INSERT INTO organizations (
     '02438251234', 
     'https://cdn.example.com/documents/giay_phep_xanh_vn.pdf', 
     'APPROVED', 
-    1, 
-    NULL
+    3, 
+    NULL,
+    '2026-11-01 09:00:00',
+    '2026-11-01 09:00:00'
 ),
 (
     2,
@@ -24,8 +28,10 @@ INSERT INTO organizations (
     '02838294444', 
     'https://cdn.example.com/documents/quyet_dinh_mhx.pdf', 
     'APPROVED', 
-    2, 
-    NULL
+    4, 
+    NULL,
+    '2026-11-01 09:00:00',
+    '2026-11-01 09:00:00'
 ),
 (
     3,
@@ -37,6 +43,38 @@ INSERT INTO organizations (
     '0902333444', 
     'https://cdn.example.com/documents/giay_chung_nhan_anh_sang.pdf', 
     'APPROVED', 
-    3, 
-    NULL
+    5, 
+    NULL,
+    '2026-11-01 09:00:00',
+    '2026-11-01 09:00:00'
+),
+(
+    4,
+    'Ánh Sáng Tri Thức',
+    'Tổ chức các chương trình giáo dục cộng đồng và trao học bổng cho học sinh nghèo vượt khó.',
+    'https://cdn.example.com/logos/anh_sang_tri_thuc.png',
+    'Thanh Xuân, Hà Nội',
+    'contact@anhsangtrithuc.vn',
+    '0244567890',
+    'https://cdn.example.com/documents/ho_so_astt.pdf',
+    'PENDING',
+    6,
+    NULL,
+    '2026-11-02 09:00:00',
+    '2026-11-02 09:00:00'
+),
+(
+    5,
+    'Nhịp Cầu Nhân Ái',
+    'Tổ chức các chương trình thiện nguyện và hỗ trợ cộng đồng vùng sâu vùng xa.',
+    'https://cdn.example.com/logos/nhip_cau_nhan_ai.png',
+    'Long Biên, Hà Nội',
+    'contact@nhipcaunhanai.vn',
+    '0245678901',
+    'https://cdn.example.com/documents/ho_so_ncna.pdf',
+    'REJECTED',
+    7,
+    'Hồ sơ chưa đáp ứng yêu cầu xác minh.',
+    '2026-11-02 09:00:00',
+    '2026-11-02 09:00:00'
 );

@@ -1,3 +1,4 @@
+USE volunteerlink_db;
 
 INSERT INTO campaigns (
     organization_id,
@@ -91,7 +92,7 @@ VALUES
     '2026-11-08 03:00:00'
 ),
 (
-    4,
+    2,
     'Bữa cơm yêu thương',
     'Chuẩn bị và trao tặng các suất ăn miễn phí cho người có hoàn cảnh khó khăn.',
     NULL,
@@ -109,7 +110,7 @@ VALUES
     '2026-11-06 04:00:00'
 ),
 (
-    5,
+    3,
     'Dạy tin học cơ bản cho trẻ em',
     'Hướng dẫn học sinh sử dụng máy tính, phần mềm văn phòng và kỹ năng Internet an toàn.',
     NULL,
@@ -181,7 +182,7 @@ VALUES
     '2026-10-26 03:00:00'
 ),
 (
-    4,
+    1,
     'Trung thu cho em',
     'Tổ chức trò chơi, văn nghệ và trao quà Trung thu cho trẻ em có hoàn cảnh khó khăn.',
     NULL,
@@ -199,7 +200,7 @@ VALUES
     '2026-09-26 02:00:00'
 ),
 (
-    5,
+    3,
     'Hướng dẫn kỹ năng số cho người cao tuổi',
     'Hỗ trợ người cao tuổi sử dụng điện thoại thông minh và các dịch vụ trực tuyến.',
     NULL,
@@ -235,7 +236,7 @@ VALUES
     '2026-11-08 02:00:00'
 ),
 (
-    4,
+    1,
     'Thăm hỏi và hỗ trợ người cao tuổi',
     'Thăm hỏi, trò chuyện và hỗ trợ tổ chức các hoạt động sinh hoạt cho người cao tuổi.',
     NULL,
@@ -271,7 +272,7 @@ VALUES
     '2026-11-08 02:00:00'
 ),
 (
-    5,
+    2,
     'Hỗ trợ tổ chức hội sách cộng đồng',
     'Sắp xếp sách, hướng dẫn khách tham quan và tổ chức hoạt động khuyến đọc.',
     NULL,

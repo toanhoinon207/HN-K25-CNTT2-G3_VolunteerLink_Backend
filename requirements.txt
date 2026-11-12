@@ -8,5 +8,5 @@ bcrypt
 python-multipart
 pydantic
 email-validator
-pydantic-settting
+pydantic-settings
 tzdata
