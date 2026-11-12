@@ -86,7 +86,15 @@ def update_my_organization_service(
             detail="Không tìm thấy thông tin tổ chức của bạn."
         )
 
-    update_data = payload.model_dump(exclude_unset=True)
+    if payload.email and payload.email != org.email:
+        email_exist = get_organization_by_email(db, payload.email)
+        if email_exist:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email của tổ chức này đã được sử dụng."
+            )
+
+    update_data = payload.model_dump(exclude_unset=True, exclude_none=True)
 
     for key, value in update_data.items():
         setattr(org, key, value)

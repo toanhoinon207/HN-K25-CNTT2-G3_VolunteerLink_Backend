@@ -1,4 +1,7 @@
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -8,6 +11,12 @@ from app.models.organizations import OrganizationModel, OrganizationStatus
 from app.models.registration import RegistrationModel
 from app.models.users import UserModel
 from app.schemas.campaigns import CampaignCreate, CampaignUpdate
+
+
+def to_naive_vn(dt: datetime) -> datetime:
+    if dt is not None and dt.tzinfo is not None:
+        return dt.astimezone(ZoneInfo("Asia/Ho_Chi_Minh")).replace(tzinfo=None)
+    return dt
 
 
 def get_approved_organization(db: Session, user_id: int):
@@ -31,9 +40,9 @@ def get_approved_organization(db: Session, user_id: int):
 
 
 def validate_campaign(data: dict):
-    start = data["start_time"]
-    end = data["end_time"]
-    deadline = data["registration_deadline"]
+    start = to_naive_vn(data["start_time"])
+    end = to_naive_vn(data["end_time"])
+    deadline = to_naive_vn(data["registration_deadline"])
 
     if end <= start:
         raise HTTPException(
@@ -126,7 +135,7 @@ def update_campaign(
         db, campaign_id, organization.id
     )
 
-    updates = data.model_dump(exclude_unset=True)
+    updates = data.model_dump(exclude_unset=True, exclude_none=True)
 
     merged = {
         column.name: getattr(campaign, column.name)

@@ -3,17 +3,16 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user
-from app.schemas.registration import RegistrationCreate
-from app.services.registrations import create_registration
-from app.models.users import UserModel
-from app.services.registrations import cancel_registration
+from app.schemas.registration import RegistrationCreate, RegistrationResponse
+from app.services.registrations import create_registration, cancel_registration
+
 router = APIRouter(
     prefix="/registrations",
     tags=["Registrations"]
 )
 
 
-@router.post("/")
+@router.post("/", response_model=RegistrationResponse)
 def register_campaign(
     data: RegistrationCreate,
     db: Session = Depends(get_db),
@@ -26,7 +25,7 @@ def register_campaign(
         data.message
     )
 
-@router.patch("/{registration_id}/cancel")
+@router.patch("/{registration_id}/cancel", response_model=RegistrationResponse)
 def cancel_registration_api(
     registration_id: int,
     db: Session = Depends(get_db),

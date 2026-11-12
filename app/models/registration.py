@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
 from app.db.session import Base
 from sqlalchemy.orm import relationship
 
@@ -15,7 +15,7 @@ class RegistrationModel(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable = False)
     campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable = False)
-    status = Column(String(20), default="PENDING")
+    status = Column(String(20), nullable = False, default="PENDING")
     message = Column(Text, nullable=True)
     rejection_reason = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable = False, default = now_vietnam)
