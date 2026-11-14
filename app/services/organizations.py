@@ -3,6 +3,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.organizations import OrganizationModel, OrganizationStatus
+from app.models.users import UserModel
 from app.schemas.organizations import OrganizationCreate, OrganizationUpdate
 
 
@@ -88,13 +89,20 @@ def update_my_organization_service(
 
     if payload.email and payload.email != org.email:
         email_exist = get_organization_by_email(db, payload.email)
+
         if email_exist:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email của tổ chức này đã được sử dụng."
             )
 
-    update_data = payload.model_dump(exclude_unset=True, exclude_none=True)
+    update_data = payload.model_dump(
+        exclude_unset=True,
+        exclude_none=True
+    )
+
+    update_data.pop("status", None)
+    update_data.pop("rejection_reason", None)
 
     for key, value in update_data.items():
         setattr(org, key, value)
@@ -107,3 +115,75 @@ def update_my_organization_service(
     db.refresh(org)
 
     return org
+
+
+class OrganizationService:
+
+    @staticmethod
+    def get_pending_organizations(db: Session):
+        """Lấy danh sách hồ sơ đang chờ duyệt."""
+
+        return db.query(OrganizationModel).filter(
+            OrganizationModel.status == OrganizationStatus.PENDING
+        ).all()
+
+    @staticmethod
+    def review_organization(
+        db: Session,
+        org_id: int,
+        action: str,
+        reason: str | None = None
+    ):
+        
+
+        org = db.query(OrganizationModel).filter(
+            OrganizationModel.id == org_id
+        ).first()
+
+        if not org:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Không tìm thấy thông tin tổ chức."
+            )
+
+        if org.status != OrganizationStatus.PENDING:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Hồ sơ này đã được xử lý trước đó với trạng thái: {org.status}"
+            )
+
+        action = action.strip().upper()
+
+        if action not in ["APPROVE", "REJECT"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Hành động không hợp lệ. Chỉ chấp nhận APPROVE hoặc REJECT."
+            )
+
+        user_owner = db.query(UserModel).filter(
+            UserModel.id == org.owner_id
+        ).first()
+
+        if action == "APPROVE":
+            org.status = OrganizationStatus.APPROVED
+
+            if user_owner:
+                user_owner.role = "ORGANIZER"
+
+        elif action == "REJECT":
+            if not reason or not reason.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Bắt buộc phải nhập lý do khi từ chối hồ sơ."
+                )
+
+            org.status = OrganizationStatus.REJECTED
+            org.rejection_reason = reason.strip()
+
+        db.commit()
+        db.refresh(org)
+
+        if user_owner:
+            db.refresh(user_owner)
+
+        return org

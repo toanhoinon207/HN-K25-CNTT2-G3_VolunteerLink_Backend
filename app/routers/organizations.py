@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.users import UserModel
+from app.services.organizations import OrganizationService
 from app.schemas.organizations import (
     OrganizationCreate,
     OrganizationUpdate,
@@ -69,3 +70,29 @@ def update_my_organization(
         payload=payload,
         owner_id=current_user.id
     )
+
+
+router = APIRouter(prefix="/admin/organizations", tags=["Admin Organizations"])
+
+@router.get("/pending")
+def list_pending_orgs(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+    # Kiểm tra phân quyền Admin tại đây nếu cần
+    return OrganizationService.get_pending_organizations(db)
+
+@router.patch("/{org_id}/review")
+def review_org(
+    org_id: int,
+    action: str, # "APPROVE" hoặc "REJECT"
+    reason: str = None,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+    updated_org = OrganizationService.review_organization(db, org_id, action, reason)
+    return {
+        "message": f"Đã xử lý hồ sơ thành công.",
+        "organization_id": updated_org.id,
+        "status": updated_org.status
+    }
