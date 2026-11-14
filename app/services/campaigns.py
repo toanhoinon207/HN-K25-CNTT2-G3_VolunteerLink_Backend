@@ -3,8 +3,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, or_, and_, case
 
 from app.models.campaigns import CampaignModel
 from app.models.organizations import OrganizationModel, OrganizationStatus
@@ -197,3 +197,166 @@ def submit_campaign(
     db.refresh(campaign)
 
     return campaign
+
+
+def get_public_campaign_query(db: Session):
+    return (
+        db.query(CampaignModel)
+        .join(CampaignModel.organization)
+        .options(joinedload(CampaignModel.organization))
+        .filter(
+            CampaignModel.status.in_(
+                ["OPEN", "CLOSED", "COMPLETED"]
+            ),
+            OrganizationModel.status
+            == OrganizationStatus.APPROVED
+        )
+    )
+
+
+def search_campaigns(query, keyword: str | None):
+    if keyword and keyword.strip():
+        query = query.filter(
+            CampaignModel.title.ilike(
+                f"%{keyword.strip()}%"
+            )
+        )
+
+    return query
+
+
+def filter_campaigns(query, category: str | None):
+    if category and category.strip():
+        query = query.filter(
+            CampaignModel.category == category.strip()
+        )
+
+    return query
+
+
+def sort_campaigns(query):
+    return query.order_by(
+        CampaignModel.updated_at.desc(),
+        CampaignModel.id.desc()
+    )
+
+
+def paginate_campaigns(query, page: int, page_size: int):
+    offset = (page - 1) * page_size
+
+    return query.offset(offset).limit(page_size)
+
+
+def get_public_campaigns(
+    db: Session,
+    keyword: str | None = None,
+    category: str | None = None,
+    page: int = 1,
+    page_size: int = 6
+):
+    query = get_public_campaign_query(db)
+    query = search_campaigns(query, keyword)
+    query = filter_campaigns(query, category)
+    total = query.order_by(None).count()
+    query = sort_campaigns(query)
+    query = paginate_campaigns(
+        query, page, page_size
+    )
+
+    campaigns = query.all()
+
+    return {
+        "items": campaigns,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (
+            total + page_size - 1
+        ) // page_size
+    }
+
+
+def get_public_campaign_detail(
+    db: Session,
+    campaign_id: int
+):
+    campaign = (
+        get_public_campaign_query(db)
+        .filter(CampaignModel.id == campaign_id)
+        .first()
+    )
+
+    if campaign is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Không tìm thấy chiến dịch công khai"
+        )
+
+    approved_count = (
+        db.query(func.count(RegistrationModel.id))
+        .filter(
+            RegistrationModel.campaign_id == campaign_id,
+            RegistrationModel.status == "APPROVED"
+        )
+        .scalar()
+    ) or 0
+
+    campaign.approved_count = approved_count
+
+    campaign.remaining_slots = max(
+        campaign.max_participants - approved_count,
+        0
+    )
+
+    return campaign
+
+
+def get_featured_campaigns(db: Session, limit: int = 3):
+    now = datetime.now(
+        ZoneInfo("Asia/Ho_Chi_Minh")
+    ).replace(tzinfo=None)
+
+    # Thống kê số đăng ký của mỗi chiến dịch
+    stats = (
+        db.query(
+            RegistrationModel.campaign_id,
+            func.count(RegistrationModel.id).label("total"),
+            func.count(
+                case(
+                    (RegistrationModel.status == "APPROVED",
+                     RegistrationModel.id)
+                )
+            ).label("approved")
+        )
+        .filter(
+            RegistrationModel.status.in_(["PENDING", "APPROVED"])
+        )
+        .group_by(RegistrationModel.campaign_id)
+        .subquery()
+    )
+
+    campaigns = (
+        db.query(CampaignModel)
+        .join(CampaignModel.organization)
+        .outerjoin(
+            stats,
+            CampaignModel.id == stats.c.campaign_id
+        )
+        .filter(
+            OrganizationModel.status == OrganizationStatus.APPROVED,
+            CampaignModel.status == "OPEN",
+            CampaignModel.registration_deadline > now,
+            CampaignModel.start_time > now,
+            CampaignModel.max_participants
+                > func.coalesce(stats.c.approved, 0)
+        )
+        .order_by(
+            func.coalesce(stats.c.total, 0).desc(),
+            CampaignModel.start_time.asc(),
+            CampaignModel.id.asc()
+        )
+        .limit(limit)
+        .all()
+    )
+
+    return campaigns
