@@ -9,12 +9,17 @@ from app.schemas.attendance_codes import (
     AttendanceCodeResponse,
     AttendanceCheckRequest
 )
-from app.schemas.attendances import AttendanceResponse
+from app.schemas.attendances import AttendanceListItem, AttendanceResponse, AttendanceStatusUpdate, AttendanceTimeUpdate, ManualAttendanceCreate
 from app.services.attendances import (
     create_attendance_code,
     check_in,
-    check_out
+    check_out, 
+    get_campaign_attendances,
+    manual_attendance,
+    update_attendance_status,
+    update_attendance_time
 )
+
 
 
 router = APIRouter(
@@ -52,3 +57,72 @@ def attendance_check_out(
     current_user: UserModel = Depends(require_role("USER"))
 ):
     return check_out(db, data, current_user) 
+@router.get(
+    "/campaigns/{campaign_id}",
+    response_model=list[AttendanceListItem]
+)
+def get_attendances_by_campaign(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("ORGANIZER"))
+):
+    return get_campaign_attendances(
+        db,
+        campaign_id,
+        current_user
+    )
+
+
+@router.post(
+    "/campaigns/{campaign_id}/manual",
+    response_model=AttendanceResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def create_manual_attendance(
+    campaign_id: int,
+    data: ManualAttendanceCreate,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("ORGANIZER"))
+):
+    return manual_attendance(
+        db,
+        campaign_id,
+        data,
+        current_user
+    )
+
+
+@router.patch(
+    "/{attendance_id}/status",
+    response_model=AttendanceResponse
+)
+def change_attendance_status(
+    attendance_id: int,
+    data: AttendanceStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("ORGANIZER"))
+):
+    return update_attendance_status(
+        db,
+        attendance_id,
+        data,
+        current_user
+    )
+
+
+@router.patch(
+    "/{attendance_id}/time",
+    response_model=AttendanceResponse
+)
+def change_attendance_time(
+    attendance_id: int,
+    data: AttendanceTimeUpdate,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("ORGANIZER"))
+):
+    return update_attendance_time(
+        db,
+        attendance_id,
+        data,
+        current_user
+    )
