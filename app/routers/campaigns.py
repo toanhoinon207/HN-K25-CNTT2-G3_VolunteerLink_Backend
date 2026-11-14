@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -9,7 +9,10 @@ from app.models.users import UserModel
 from app.schemas.campaigns import (
     CampaignCreate,
     CampaignUpdate,
-    CampaignResponse
+    CampaignResponse,
+    CampaignListResponse,
+    CampaignDetailResponse,
+    CampaignListItemResponse
 )
 
 from app.services import campaigns as campaign_service
@@ -69,3 +72,49 @@ def submit_campaign(
     return campaign_service.submit_campaign(
         db, campaign_id, current_user
     )
+
+
+@router.get(
+    "",
+    response_model=CampaignListResponse
+)
+def list_public_campaigns(
+    keyword: str | None = None,
+    category: str | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=6, ge=1, le=100),
+    db: Session = Depends(get_db)
+):
+    return campaign_service.get_public_campaigns(
+        db=db,
+        keyword=keyword,
+        category=category,
+        page=page,
+        page_size=page_size
+    )
+
+@router.get(
+    "/featured",
+    response_model=list[CampaignListItemResponse]
+)
+def list_featured_campaigns(
+    db: Session = Depends(get_db)
+):
+    return campaign_service.get_featured_campaigns(
+        db=db,
+        limit=3
+    )
+
+@router.get(
+    "/{campaign_id}",
+    response_model=CampaignDetailResponse
+)
+def public_campaign_detail(
+    campaign_id: int,
+    db: Session = Depends(get_db)
+):
+    return campaign_service.get_public_campaign_detail(
+        db, campaign_id
+    )
+
+
