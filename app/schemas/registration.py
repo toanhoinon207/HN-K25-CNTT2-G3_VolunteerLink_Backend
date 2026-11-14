@@ -1,5 +1,5 @@
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict ,Field
 from typing import Optional
 
 
@@ -16,3 +16,10 @@ class RegistrationResponse(BaseModel):
     message: Optional[str]
     rejection_reason: Optional[str]
     model_config = ConfigDict(from_attributes=True) 
+
+class RejectRegistrationRequest(BaseModel):
+    reason: str = Field(
+        min_length=1,
+        max_length=500,
+        description="Lý do từ chối đăng ký"
+    )
