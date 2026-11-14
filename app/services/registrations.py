@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from app.models.registration import RegistrationModel
 from app.models.campaigns import CampaignModel
-
+from app.services.notifications import create_notification
 
 def now_vietnam():
     return datetime.now(
@@ -156,10 +156,16 @@ def approve_registration(
         registration.rejection_reason = None
 
          # 7. Gửi thông báo qua module Notifications
-        # Gọi hàm tạo thông báo của nhóm tại đây
-
+        # Gửi thông báo qua module Notifications
+        create_notification(
+        db=db,
+        user_id=registration.user_id,
+        title="Đăng ký chiến dịch được duyệt",
+        content="Đăng ký tham gia chiến dịch của bạn đã được duyệt.",
+        link=f"/campaigns/{campaign_id}"
+        )
         db.commit()
-        db.query(RegistrationModel)
+        db.refresh(registration)
 
         return {
     "message": "Duyệt đăng ký thành công",
@@ -167,8 +173,9 @@ def approve_registration(
     "campaign_id": registration.campaign_id,
     "status": registration.status
 }
-
-
+    except HTTPException:
+        db.rollback()
+        raise
 
     except Exception :
         db.rollback()
