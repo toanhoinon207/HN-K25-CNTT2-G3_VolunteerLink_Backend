@@ -165,10 +165,23 @@ class OrganizationService:
         ).first()
 
         if action == "APPROVE":
+            if user_owner is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Không thể duyệt: tài khoản quản lý tổ chức không tồn tại."
+                )
+            if user_owner.status != "ACTIVE":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Không thể duyệt: tài khoản quản lý tổ chức không hoạt động."
+                )
+            if user_owner.role != "USER":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Không thể duyệt: tài khoản không còn vai trò USER."
+                )
             org.status = OrganizationStatus.APPROVED
-
-            if user_owner:
-                user_owner.role = "ORGANIZER"
+            user_owner.role = "ORGANIZER"
 
         elif action == "REJECT":
             if not reason or not reason.strip():

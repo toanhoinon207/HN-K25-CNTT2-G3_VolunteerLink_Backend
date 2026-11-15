@@ -10,7 +10,7 @@ from app.schemas.organizations import (
     OrganizationUpdate,
     OrganizationResponse
 )
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import get_current_user, require_role
 
 from app.services.organizations import (
     create_organization_service,
@@ -33,7 +33,7 @@ router = APIRouter(
 def register_organization(
     payload: OrganizationCreate,
     db: Session = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user)
+    current_user: UserModel = Depends(require_role("USER"))
 ):
     return create_organization_service(
         db=db,
@@ -72,23 +72,22 @@ def update_my_organization(
     )
 
 
-router = APIRouter(prefix="/admin/organizations", tags=["Admin Organizations"])
+admin_router = APIRouter(prefix="/admin/organizations", tags=["Admin Organizations"])
 
-@router.get("/pending")
+@admin_router.get("/pending")
 def list_pending_orgs(
     db: Session = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user)
+    current_user: UserModel = Depends(require_role("ADMIN"))
 ):
-    # Kiểm tra phân quyền Admin tại đây nếu cần
     return OrganizationService.get_pending_organizations(db)
 
-@router.patch("/{org_id}/review")
+@admin_router.patch("/{org_id}/review")
 def review_org(
     org_id: int,
     action: str, # "APPROVE" hoặc "REJECT"
     reason: str = None,
     db: Session = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user)
+    current_user: UserModel = Depends(require_role("ADMIN"))
 ):
     updated_org = OrganizationService.review_organization(db, org_id, action, reason)
     return {

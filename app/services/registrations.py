@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from app.models.registration import RegistrationModel
 from app.models.campaigns import CampaignModel
+from app.models.users import UserModel
 from app.services.notifications import create_notification
 
 def now_vietnam():
@@ -13,6 +14,9 @@ def now_vietnam():
 
 
 def create_registration(db : Session, user_id : int , campaign_id : int , message : str = None) :
+
+    # Khóa theo người dùng để tránh hai yêu cầu đăng ký đồng thời.
+    db.query(UserModel).filter(UserModel.id == user_id).with_for_update().first()
 
     # 1. kiểm tra chiến dịch có tồn tại kh 
     campaign = db.query(CampaignModel).filter(CampaignModel.id == campaign_id).first()
@@ -63,6 +67,8 @@ def create_registration(db : Session, user_id : int , campaign_id : int , messag
         old_registration.status = "PENDING"
         old_registration.message = message
         old_registration.rejection_reason = None
+        # Lần đăng ký mới sau khi hủy: cập nhật thời điểm gửi đơn.
+        old_registration.created_at = now
         db.commit()
         db.refresh(old_registration)
         return old_registration
@@ -128,10 +134,30 @@ def approve_registration(
         campaign_id : int
 ): 
     try:
-        campaign = db.query(CampaignModel).filter(CampaignModel.id == campaign_id).with_for_update().first()
+        # Thứ tự khóa thống nhất: User -> Campaign (như create_registration).
+        # Lấy user_id trước khi khóa; sau khi khóa phải kiểm tra lại trạng thái đơn.
+        registration_user_id = db.query(RegistrationModel.user_id).filter(
+            RegistrationModel.id == registration_id,
+            RegistrationModel.campaign_id == campaign_id
+        ).scalar()
+        if registration_user_id is None:
+            raise HTTPException(404, "Không tìm thấy đăng ký")
 
-        if not campaign :
-            raise HTTPException(404,"Không tìm thấy chiến dịch")
+        user = db.query(UserModel).filter(
+            UserModel.id == registration_user_id
+        ).with_for_update().first()
+        if user is None:
+            raise HTTPException(404, "Không tìm thấy người đăng ký")
+
+        campaign = db.query(CampaignModel).filter(
+            CampaignModel.id == campaign_id
+        ).with_for_update().first()
+        if not campaign:
+            raise HTTPException(404, "Không tìm thấy chiến dịch")
+        if campaign.status != "OPEN":
+            raise HTTPException(400, "Chiến dịch không còn mở đăng ký")
+        if campaign.registration_deadline < now_vietnam():
+            raise HTTPException(400, "Chiến dịch đã hết hạn đăng ký")
 
         registration = db.query(RegistrationModel).filter(RegistrationModel.id == registration_id,RegistrationModel.campaign_id == campaign_id).first()
 
@@ -141,6 +167,19 @@ def approve_registration(
         # 3. chỉ duyệt đơn đang chờ 
         if registration.status != "PENDING" :
             raise HTTPException(400,"Đăng ký không ở trạng thái chờ duyệt")
+
+        # Kiểm tra lại trùng lịch ngay lúc duyệt, không chỉ lúc đăng ký.
+        approved_registrations = db.query(RegistrationModel).join(
+            CampaignModel, RegistrationModel.campaign_id == CampaignModel.id
+        ).filter(
+            RegistrationModel.user_id == registration.user_id,
+            RegistrationModel.status == "APPROVED",
+            RegistrationModel.id != registration.id,
+            CampaignModel.start_time < campaign.end_time,
+            CampaignModel.end_time > campaign.start_time
+        ).first()
+        if approved_registrations:
+            raise HTTPException(400, "Lịch chiến dịch bị trùng với chiến dịch đã được duyệt")
 
         #4. đếm số người đã được duyệt
         approve_count = db.query(RegistrationModel).filter(
@@ -202,7 +241,7 @@ def reject_registration(
 
     try :
         registration.status = "REJECTED"
-        registration.reason = reason.strip()
+        registration.rejection_reason = reason.strip()
 
         db.commit()
         db.refresh(registration)
