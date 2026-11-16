@@ -81,6 +81,7 @@ def submit_campaign(
 def list_public_campaigns(
     keyword: str | None = None,
     category: str | None = None,
+    sort: str | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=6, ge=1, le=100),
     db: Session = Depends(get_db)
@@ -89,6 +90,7 @@ def list_public_campaigns(
         db=db,
         keyword=keyword,
         category=category,
+        sort=sort,
         page=page,
         page_size=page_size
     )
@@ -98,11 +100,12 @@ def list_public_campaigns(
     response_model=list[CampaignListItemResponse]
 )
 def list_featured_campaigns(
+    limit: int = Query(default=6, ge=1, le=100),
     db: Session = Depends(get_db)
 ):
     return campaign_service.get_featured_campaigns(
         db=db,
-        limit=3
+        limit=limit
     )
 
 @router.get(

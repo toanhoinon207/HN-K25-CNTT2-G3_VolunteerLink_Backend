@@ -234,7 +234,22 @@ def filter_campaigns(query, category: str | None):
     return query
 
 
-def sort_campaigns(query):
+def sort_campaigns(query, sort: str | None = None):
+    if sort == "oldest":
+        return query.order_by(
+            CampaignModel.updated_at.asc(),
+            CampaignModel.id.asc()
+        )
+    if sort == "start_asc":
+        return query.order_by(
+            CampaignModel.start_time.asc(),
+            CampaignModel.id.asc()
+        )
+    if sort == "deadline_asc":
+        return query.order_by(
+            CampaignModel.registration_deadline.asc(),
+            CampaignModel.id.asc()
+        )
     return query.order_by(
         CampaignModel.updated_at.desc(),
         CampaignModel.id.desc()
@@ -251,6 +266,7 @@ def get_public_campaigns(
     db: Session,
     keyword: str | None = None,
     category: str | None = None,
+    sort: str | None = None,
     page: int = 1,
     page_size: int = 6
 ):
@@ -258,7 +274,7 @@ def get_public_campaigns(
     query = search_campaigns(query, keyword)
     query = filter_campaigns(query, category)
     total = query.order_by(None).count()
-    query = sort_campaigns(query)
+    query = sort_campaigns(query, sort)
     query = paginate_campaigns(
         query, page, page_size
     )
