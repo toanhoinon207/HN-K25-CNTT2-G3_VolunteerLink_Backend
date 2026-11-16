@@ -205,8 +205,9 @@ def check_out(db, data, current_user):
             raise HTTPException(409, "Bạn đã check-out trước đó")
 
         attendance.check_out_at = now
-        attendance.total_minutes = int(
-            (now - attendance.check_in_at).total_seconds() // 60
+        attendance.total_minutes = max(
+            0,
+            int(round((now - attendance.check_in_at).total_seconds() / 60))
         )
 
         db.commit()
@@ -473,8 +474,9 @@ def update_attendance_time(
                     detail="Giờ check-out phải sau giờ check-in"
                 )
 
-            attendance.total_minutes = int(
-                (check_out - check_in).total_seconds() // 60
+            attendance.total_minutes = max(
+                0,
+                int(round((check_out - check_in).total_seconds() / 60))
             )
         else:
             attendance.total_minutes = 0
