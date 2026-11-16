@@ -16,6 +16,7 @@ class UserModel(Base):
     password_hash = Column(String(255), nullable = False)
     full_name = Column(String(150), nullable = False)
     phone = Column(String(20))
+    avatar_url = Column(String(500), nullable = True)
     role = Column(Enum("USER", "ORGANIZER", "ADMIN"), nullable = False, default = "USER")
     status = Column(Enum("ACTIVE", "LOCKED"), nullable = False, default = "ACTIVE")
     created_at = Column(DateTime, nullable = False, default = now_vietnam)
