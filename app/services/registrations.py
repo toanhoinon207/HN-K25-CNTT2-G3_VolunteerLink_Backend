@@ -4,7 +4,9 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from app.models.registration import RegistrationModel
 from app.models.campaigns import CampaignModel
-
+from app.models.users import UserModel
+from app.models.waitlist_entry import WaitlistEntryModel
+from app.services.notifications import create_notification
 
 def now_vietnam():
     return datetime.now(
@@ -14,8 +16,11 @@ def now_vietnam():
 
 def create_registration(db : Session, user_id : int , campaign_id : int , message : str = None) :
 
+    # Khóa theo người dùng để tránh hai yêu cầu đăng ký đồng thời.
+    db.query(UserModel).filter(UserModel.id == user_id).with_for_update().first()
+
     # 1. kiểm tra chiến dịch có tồn tại kh 
-    campaign = db.query(CampaignModel).filter(CampaignModel.id == campaign_id).first()
+    campaign = db.query(CampaignModel).filter(CampaignModel.id == campaign_id).with_for_update().first()
     if campaign is None : 
         raise HTTPException(status_code=404, detail="Không tìm thấy chiến dịch")
 
@@ -59,10 +64,18 @@ def create_registration(db : Session, user_id : int , campaign_id : int , messag
                 detail="Lịch chiến dịch bị trùng với chiến dịch đã được duyệt"
             )
 
+    waitlist_entry = db.query(WaitlistEntryModel).filter_by(
+        user_id=user_id, campaign_id=campaign_id
+    ).first()
+    if waitlist_entry and waitlist_entry.status in ("WAITING", "INVITED"):
+        waitlist_entry.status = "ACCEPTED"
+
     if old_registration and old_registration.status == "CANCELLED":
         old_registration.status = "PENDING"
         old_registration.message = message
         old_registration.rejection_reason = None
+        # Lần đăng ký mới sau khi hủy: cập nhật thời điểm gửi đơn.
+        old_registration.created_at = now
         db.commit()
         db.refresh(old_registration)
         return old_registration
@@ -121,3 +134,140 @@ def cancel_registration(db: Session, registration_id: int, user_id: int):
     db.refresh(registration)
 
     return registration
+
+def approve_registration(
+        db: Session,
+        registration_id : int ,
+        campaign_id : int
+): 
+    try:
+        # Thứ tự khóa thống nhất: User -> Campaign (như create_registration).
+        # Lấy user_id trước khi khóa; sau khi khóa phải kiểm tra lại trạng thái đơn.
+        registration_user_id = db.query(RegistrationModel.user_id).filter(
+            RegistrationModel.id == registration_id,
+            RegistrationModel.campaign_id == campaign_id
+        ).scalar()
+        if registration_user_id is None:
+            raise HTTPException(404, "Không tìm thấy đăng ký")
+
+        user = db.query(UserModel).filter(
+            UserModel.id == registration_user_id
+        ).with_for_update().first()
+        if user is None:
+            raise HTTPException(404, "Không tìm thấy người đăng ký")
+
+        campaign = db.query(CampaignModel).filter(
+            CampaignModel.id == campaign_id
+        ).with_for_update().first()
+        if not campaign:
+            raise HTTPException(404, "Không tìm thấy chiến dịch")
+        if campaign.status != "OPEN":
+            raise HTTPException(400, "Chiến dịch không còn mở đăng ký")
+        if campaign.registration_deadline < now_vietnam():
+            raise HTTPException(400, "Chiến dịch đã hết hạn đăng ký")
+
+        registration = db.query(RegistrationModel).filter(RegistrationModel.id == registration_id,RegistrationModel.campaign_id == campaign_id).first()
+
+        if not registration :
+            raise HTTPException(404,"không tìm thấy đăng ký")
+
+        # 3. chỉ duyệt đơn đang chờ 
+        if registration.status != "PENDING" :
+            raise HTTPException(400,"Đăng ký không ở trạng thái chờ duyệt")
+
+        # Kiểm tra lại trùng lịch ngay lúc duyệt, không chỉ lúc đăng ký.
+        approved_registrations = db.query(RegistrationModel).join(
+            CampaignModel, RegistrationModel.campaign_id == CampaignModel.id
+        ).filter(
+            RegistrationModel.user_id == registration.user_id,
+            RegistrationModel.status == "APPROVED",
+            RegistrationModel.id != registration.id,
+            CampaignModel.start_time < campaign.end_time,
+            CampaignModel.end_time > campaign.start_time
+        ).first()
+        if approved_registrations:
+            raise HTTPException(400, "Lịch chiến dịch bị trùng với chiến dịch đã được duyệt")
+
+        #4. đếm số người đã được duyệt
+        approve_count = db.query(RegistrationModel).filter(
+            RegistrationModel.campaign_id == campaign_id,
+            RegistrationModel.status == "APPROVED"
+        ).count()
+
+        #5. kiểm tra giới hạn về số lượng
+        if approve_count >= campaign.max_participants:
+            raise HTTPException (400,"chiến dịch đã đủ số lượng người tham gia")
+
+        registration.status = "APPROVED"
+        registration.rejection_reason = None
+
+        create_notification(
+            db=db,
+            user_id=registration.user_id,
+            title="Đăng ký chiến dịch được duyệt",
+            content=f'Đăng ký tham gia chiến dịch "{campaign.title}" đã được duyệt.',
+            link=f"user-dashboard.html?tab=overview&campaign_id={campaign_id}",
+        )
+        db.commit()
+        db.refresh(registration)
+
+        return {
+    "message": "Duyệt đăng ký thành công",
+    "registration_id": registration.id,
+    "campaign_id": registration.campaign_id,
+    "status": registration.status
+}
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception :
+        db.rollback()
+        raise
+
+def reject_registration(
+        db: Session,
+        registration_id : int ,
+        campaign_id : int ,
+        reason : str 
+):
+    registration = db.query(RegistrationModel).filter(
+        RegistrationModel.id == registration_id,
+        RegistrationModel.campaign_id == campaign_id
+    ).first()
+
+    if not registration:
+        raise HTTPException(404,"không tìm thấy đăng ký") 
+    if registration.status != "PENDING" :
+        raise HTTPException (400, " đăng ký không ở trạng thái chờ duyệt")
+
+    if not reason or not reason.strip():
+        raise HTTPException(400,"Vui lòng nhập lý do từ chối")
+
+    try :
+        registration.status = "REJECTED"
+        registration.rejection_reason = reason.strip()
+
+        db.commit()
+        db.refresh(registration)
+
+        return registration
+    except Exception:
+        db.rollback()
+        raise
+
+def get_campaign_registrations(
+    db: Session,
+    campaign_id: int,
+    status: str = None
+):
+    query = db.query(RegistrationModel).filter(
+        RegistrationModel.campaign_id == campaign_id
+    )
+
+    if status:
+        query = query.filter(
+            RegistrationModel.status == status
+        )
+
+    return query.all()

@@ -81,3 +81,57 @@ class CampaignResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+class OrganizationPublicResponse(BaseModel):
+    id: int
+    name: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CampaignListItemResponse(BaseModel):
+    id: int
+    image_url: Optional[str] = None
+    title: str
+    category: str
+    status: Literal["OPEN", "CLOSED", "COMPLETED"]
+    description: str
+    location: str
+    organization: OrganizationPublicResponse
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CampaignListResponse(BaseModel):
+    items: list[CampaignListItemResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class CampaignDetailResponse(BaseModel):
+    id: int
+    organization_id: int
+
+    image_url: Optional[str] = None
+    title: str
+    description: str
+    category: str
+    location: str
+    status: Literal["OPEN", "CLOSED", "COMPLETED"]
+
+    start_time: datetime
+    end_time: datetime
+    registration_deadline: datetime
+
+    max_participants: int
+    requirements: Optional[str] = None
+    estimated_hours: float
+
+    approved_count: int
+    remaining_slots: int
+
+    organization: OrganizationPublicResponse
+
+    model_config = ConfigDict(from_attributes=True)
