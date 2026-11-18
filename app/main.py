@@ -1,40 +1,90 @@
+
 """Điểm khởi động của backend.
 
-Chạy:  uvicorn app.main:app --reload
-Tài liệu API tự sinh: http://127.0.0.1:8000/docs
+Chạy: uvicorn app.main:app --reload
+Tài liệu API: http://127.0.0.1:8000/docs
 """
+
 from contextlib import asynccontextmanager
+import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import OperationalError
 
-from app import models  # noqa: F401 - import để SQLAlchemy biết các bảng
+from app import models
 from app.core.config import settings
-from app.db.session import Base, engine
+from app.db.session import Base, engine, SessionLocal
+from app.services.waitlist import process_expired_invites
 
-from app.routers import health, items, auth, registations, attendance, campaigns, organizations
+# Import hàm seed dữ liệu
+from app.db.seed import run_seed
 
+from app.routers import (
+    health,
+    auth,
+    registations,
+    attendance,
+    campaigns,
+    organizations,
+    profile,
+    notification,
+    certificates,
+    waitlist,
+    hour_claims
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Tự tạo các bảng còn thiếu khi server khởi động (bảng đã có thì bỏ qua).
-    # Lưu ý: create_all KHÔNG sửa bảng đã tồn tại. Đổi cột -> sửa bằng SQL hoặc xoá bảng tạo lại.
     try:
+        # 1. Tạo các bảng còn thiếu
         Base.metadata.create_all(bind=engine)
-        print(f"[DB] Đã kết nối MySQL {settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
+
+        print(
+            f"[DB] Đã kết nối MySQL "
+            f"{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+        )
+
+        # 2. Tự động seed dữ liệu mẫu
+        print("[SEED] Bắt đầu thêm dữ liệu mẫu...")
+        run_seed()
+
     except OperationalError as error:
-        print("[DB] KHÔNG kết nối được MySQL! Kiểm tra MySQL đã bật chưa và file .env.")
+        print("[DB] KHÔNG kết nối được MySQL!")
+        print("[DB] Kiểm tra MySQL và file .env")
+
         if "Unknown database" in str(error.orig):
-            print("[DB] Chưa có database -> mở MySQL Workbench, chạy file sql/init.sql")
+            print("[DB] Chưa có database -> chạy sql/init.sql")
+
         print(f"[DB] Chi tiết: {error.orig}")
-    yield
+        raise
+
+    # Kiểm tra định kỳ lời mời đã quá 24 giờ để mời người kế tiếp.
+    async def expire_waitlist_invites():
+        while True:
+            await asyncio.sleep(60)
+            def process_with_session():
+                db = SessionLocal()
+                try:
+                    process_expired_invites(db)
+                finally:
+                    db.close()
+            await asyncio.to_thread(process_with_session)
+
+    expiry_task = asyncio.create_task(expire_waitlist_invites())
+    try:
+        yield
+    finally:
+        expiry_task.cancel()
 
 
-app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
+app = FastAPI(
+    title=settings.APP_NAME,
+    lifespan=lifespan
+)
 
-# CORS: cho phép trang FE (khác cổng/khác domain) gọi được API này
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -42,18 +92,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mọi API đều bắt đầu bằng /api. Thêm router mới thì include ở đây.
-# app.include_router(health.router, prefix="/api")
-# app.include_router(items.router, prefix="/api")
+app.include_router(health.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
-
-app.include_router(registations.router,prefix="/api")
-
-app.include_router(campaigns.router,prefix="/api")
-app.include_router(attendance.router,prefix="/api")
+app.include_router(registations.router, prefix="/api")
+app.include_router(campaigns.router, prefix="/api")
+app.include_router(attendance.router, prefix="/api")
 app.include_router(organizations.router, prefix="/api")
-
+app.include_router(organizations.admin_router, prefix="/api")
+app.include_router(profile.router, prefix="/api")
+app.include_router(notification.router, prefix="/api")
+app.include_router(certificates.router, prefix="/api")
+app.include_router(waitlist.router, prefix="/api")
+app.include_router(hour_claims.router, prefix="/api") 
 
 @app.get("/")
 def root():
-    return {"message": f"{settings.APP_NAME} đang chạy. Xem tài liệu API tại /docs"}
+    return {
+        "message": f"{settings.APP_NAME} đang chạy. Xem tài liệu API tại /docs"
+    }

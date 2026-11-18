@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import bcrypt
+from uuid import uuid4
 from jose import ExpiredSignatureError, JWTError, jwt
 from app.core.config import settings
 
@@ -15,6 +16,7 @@ def create_access_token(data: dict, expires_minutes: int = settings.ACCESS_TOKEN
     expire = datetime.now(timezone.utc) + timedelta(minutes = expires_minutes)
     payload["exp"] = expire
     payload["type"] = "access"
+    payload["jti"] = str(uuid4())
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm = settings.JWT_ALGORITHM)
 
 def create_refresh_token(data: dict, expires_days: int = settings.REFRESH_TOKEN_EXPIRE_DAYS):
@@ -22,6 +24,7 @@ def create_refresh_token(data: dict, expires_days: int = settings.REFRESH_TOKEN_
     expire = datetime.now(timezone.utc) + timedelta(days = expires_days)
     payload["exp"] = expire
     payload["type"] = "refresh"
+    payload["jti"] = str(uuid4())
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm = settings.JWT_ALGORITHM)
 
 def decode_access_token(token: str) -> dict:

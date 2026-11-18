@@ -11,4 +11,5 @@ from app.models.hourclaims import HourClaimModel
 from app.models.registration import RegistrationModel
 from app.models.waitlist_entry import WaitlistEntryModel
 from app.models.organizations import OrganizationStatus
-from app.models.organizations import OrganizationModel
+from app.models.auth_sessions import AuthSessionModel
+from app.models.notifications import NotificationModel
