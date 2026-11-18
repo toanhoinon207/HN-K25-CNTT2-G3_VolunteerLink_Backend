@@ -9,8 +9,11 @@ from app.services.organizations import OrganizationService, OrganizerDashboardSe
 from datetime import date
 from typing import Optional
 
+import traceback
+
 from app.models.organizations import OrganizationModel
 from app.services.organizations import OrganizationService
+
 
 from app.schemas.organizations import (
     OrganizationCreate,
@@ -119,24 +122,25 @@ def get_organizer_dashboard(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     db: Session = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user)
+    current_user = Depends(get_current_user)  
 ):
-    
-    if current_user.role not in ["ORGANIZER", "admin"]:
+    if current_user.role.lower() not in ["organizer", "admin"]:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bạn không có quyền truy cập trang quản trị của Organizer."
+            status_code=403,
+            detail="Bạn không có quyền truy cập."
         )
 
-    
-    stats = OrganizerDashboardService.get_organizer_dashboard_stats(
-        db=db,
-        organizer_id=current_user.id,
-        start_date=start_date,
-        end_date=end_date
-    )
-
-    return {
-        "message": "Lấy dữ liệu thống kê dashboard thành công",
-        "data": stats
-    }
+    try:
+        
+        stats = OrganizerDashboardService.get_organizer_dashboard_stats(
+            db=db,
+            current_user=current_user,
+            start_date=start_date,
+            end_date=end_date
+        )
+        return {
+            "message": "Thành công",
+            "data": stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
