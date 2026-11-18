@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.models.registration import RegistrationModel
 from app.models.campaigns import CampaignModel
 from app.models.users import UserModel
+from app.services.campaigns import close_expired_campaigns
 from app.services.notifications import create_notification
 
 def now_vietnam():
@@ -14,6 +15,7 @@ def now_vietnam():
 
 
 def create_registration(db : Session, user_id : int , campaign_id : int , message : str = None) :
+    close_expired_campaigns(db)
 
     # Khóa theo người dùng để tránh hai yêu cầu đăng ký đồng thời.
     db.query(UserModel).filter(UserModel.id == user_id).with_for_update().first()
