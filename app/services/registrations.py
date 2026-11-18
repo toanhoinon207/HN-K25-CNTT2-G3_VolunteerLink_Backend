@@ -7,6 +7,7 @@ from app.models.campaigns import CampaignModel
 from app.models.users import UserModel
 from app.models.waitlist_entry import WaitlistEntryModel
 from app.services.notifications import create_notification
+from app.services.waitlist import add_to_waitlist, approved_count, active_invite_count, promote_after_vacancy
 
 def now_vietnam():
     return datetime.now(
@@ -64,18 +65,43 @@ def create_registration(db : Session, user_id : int , campaign_id : int , messag
                 detail="Lịch chiến dịch bị trùng với chiến dịch đã được duyệt"
             )
 
-    waitlist_entry = db.query(WaitlistEntryModel).filter_by(
-        user_id=user_id, campaign_id=campaign_id
-    ).first()
-    if waitlist_entry and waitlist_entry.status in ("WAITING", "INVITED"):
-        waitlist_entry.status = "ACCEPTED"
+    # Chiến dịch đã đủ chỗ: ghi nhận đăng ký và xếp hàng tự động.
+    if approved_count(db, campaign_id) + active_invite_count(db, campaign_id) >= campaign.max_participants:
+        if old_registration:
+            old_registration.status = "WAITLISTED"
+            old_registration.message = message
+            old_registration.rejection_reason = None
+            old_registration.created_at = now
+            registration = old_registration
+        else:
+            registration = RegistrationModel(
+                user_id=user_id, campaign_id=campaign_id,
+                status="WAITLISTED", message=message,
+            )
+            db.add(registration)
+        add_to_waitlist(db, user_id, campaign_id)
+        db.commit()
+        db.refresh(registration)
+        return registration
 
-    if old_registration and old_registration.status == "CANCELLED":
+    waitlist_entry = db.query(WaitlistEntryModel).filter_by(
+    user_id=user_id,
+    campaign_id=campaign_id
+    ).first()
+
+    # Nếu người dùng đăng ký lại theo luồng thông thường,
+    # xóa bản ghi hàng chờ cũ để tránh bị trùng.
+    if old_registration and old_registration.status == "WAITLISTED":
+        if waitlist_entry:
+            db.delete(waitlist_entry)
+            waitlist_entry = None
+
+    if old_registration and old_registration.status in ("CANCELLED", "WAITLISTED"):
         old_registration.status = "PENDING"
         old_registration.message = message
         old_registration.rejection_reason = None
-        # Lần đăng ký mới sau khi hủy: cập nhật thời điểm gửi đơn.
         old_registration.created_at = now
+
         db.commit()
         db.refresh(old_registration)
         return old_registration
@@ -115,7 +141,7 @@ def cancel_registration(db: Session, registration_id: int, user_id: int):
     # 3. Lấy thông tin chiến dịch
     campaign = db.query(CampaignModel).filter(
         CampaignModel.id == registration.campaign_id
-    ).first()
+    ).with_for_update().first()
 
     # 4. Kiểm tra thời gian hủy
     now = now_vietnam()
@@ -128,9 +154,16 @@ def cancel_registration(db: Session, registration_id: int, user_id: int):
         )
 
     # 5. Cập nhật trạng thái
+    was_approved = registration.status == "APPROVED"
     registration.status = "CANCELLED"
-
-    db.commit()
+    try:
+        # Hủy đăng ký đã duyệt tạo chỗ trống; mời người đầu hàng ngay.
+        if was_approved:
+            promote_after_vacancy(db, registration.campaign_id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(registration)
 
     return registration
@@ -195,7 +228,12 @@ def approve_registration(
         ).count()
 
         #5. kiểm tra giới hạn về số lượng
-        if approve_count >= campaign.max_participants:
+        active_invites = db.query(WaitlistEntryModel).filter(
+            WaitlistEntryModel.campaign_id == campaign_id,
+            WaitlistEntryModel.status == "INVITED",
+            WaitlistEntryModel.response_deadline > now_vietnam(),
+        ).count()
+        if approve_count + active_invites >= campaign.max_participants:
             raise HTTPException (400,"chiến dịch đã đủ số lượng người tham gia")
 
         registration.status = "APPROVED"
@@ -247,6 +285,9 @@ def reject_registration(
     try :
         registration.status = "REJECTED"
         registration.rejection_reason = reason.strip()
+
+        # Nếu đang có chỗ trống, chuyển lời mời cho người đầu hàng.
+        promote_after_vacancy(db, campaign_id)
 
         db.commit()
         db.refresh(registration)
