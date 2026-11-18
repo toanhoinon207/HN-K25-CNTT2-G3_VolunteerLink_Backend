@@ -2,13 +2,19 @@
 
 Muốn thêm cấu hình mới: thêm 1 dòng vào class Settings + thêm vào .env.example.
 """
+from pathlib import Path
 from urllib.parse import quote_plus
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+BASE_DIR = Path(__file__).resolve().parents[2]
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=BASE_DIR / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
 
     APP_NAME: str = "KS25 Base API"
 

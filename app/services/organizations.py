@@ -6,6 +6,16 @@ from app.models.organizations import OrganizationModel, OrganizationStatus
 from app.models.users import UserModel
 from app.schemas.organizations import OrganizationCreate, OrganizationUpdate
 
+from typing import Optional
+from app.models.attendances import AttendanceModel
+from app.models.registration import RegistrationModel
+from app.models.campaigns import CampaignModel
+from sqlalchemy import func
+from datetime import date
+
+from app.services.notifications import create_notification
+
+
 
 def get_organization_by_owner(db: Session, owner_id: int):
     return db.query(OrganizationModel).filter(
@@ -138,7 +148,7 @@ class OrganizationService:
 
         org = db.query(OrganizationModel).filter(
             OrganizationModel.id == org_id
-        ).first()
+        ).with_for_update().first()
 
         if not org:
             raise HTTPException(
@@ -182,6 +192,13 @@ class OrganizationService:
                 )
             org.status = OrganizationStatus.APPROVED
             user_owner.role = "ORGANIZER"
+            create_notification(
+                db=db,
+                user_id=user_owner.id,
+                title="Hồ sơ tổ chức đã được duyệt",
+                content=f'Hồ sơ của tổ chức "{org.name}" đã được phê duyệt.',
+                link="organizer-dashboard.html?tab=profile",
+            )
 
         elif action == "REJECT":
             if not reason or not reason.strip():
@@ -192,6 +209,14 @@ class OrganizationService:
 
             org.status = OrganizationStatus.REJECTED
             org.rejection_reason = reason.strip()
+            if user_owner is not None:
+                create_notification(
+                    db=db,
+                    user_id=user_owner.id,
+                    title="Hồ sơ tổ chức bị từ chối",
+                    content=f'Hồ sơ của tổ chức "{org.name}" bị từ chối. Lý do: {org.rejection_reason}',
+                    link="user-dashboard.html?tab=upgrade",
+                )
 
         db.commit()
         db.refresh(org)
@@ -200,3 +225,90 @@ class OrganizationService:
             db.refresh(user_owner)
 
         return org
+
+class OrganizerDashboardService:
+    
+    @staticmethod
+    def get_organizer_dashboard_stats(
+        db: Session,
+        organizer_id: int,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ):
+      
+        campaign_query = db.query(CampaignModel).filter(CampaignModel.organizer_id == organizer_id)
+        
+       
+        if start_date:
+            campaign_query = campaign_query.filter(CampaignModel.created_at >= start_date)
+        if end_date:
+            campaign_query = campaign_query.filter(CampaignModel.created_at <= end_date)
+            
+        campaigns = campaign_query.all()
+        campaign_ids = [c.id for c in campaigns]
+
+       
+        status_counts = {}
+        for c in campaigns:
+            status_counts[c.status] = status_counts.get(c.status, 0) + 1
+
+        if not campaign_ids:
+            return {
+                "total_campaigns": 0,
+                "campaigns_by_status": {},
+                "total_registrations": 0,
+                "attendance_rate": 0.0,
+                "total_verified_hours": 0.0,
+                "top_volunteers": []
+            }
+
+       
+        total_registrations = db.query(RegistrationModel).filter(
+            RegistrationModel.campaign_id.in_(campaign_ids)
+        ).count()
+
+       
+        total_attendances = db.query(AttendanceModel).filter(
+            AttendanceModel.campaign_id.in_(campaign_ids)
+        ).count()
+        
+        attendance_rate = (total_attendances / total_registrations * 100) if total_registrations > 0 else 0.0
+
+       
+        total_verified_hours = db.query(func.sum(AttendanceModel.hours)).filter(
+            AttendanceModel.campaign_id.in_(campaign_ids),
+            AttendanceModel.is_verified == True
+        ).scalar() or 0.0
+
+       
+        top_volunteers_query = db.query(
+            UserModel.id,
+            UserModel.full_name,
+            UserModel.email,
+            func.sum(AttendanceModel.hours).label("total_hours"),
+            func.count(AttendanceModel.id).label("total_sessions")
+        ).join(AttendanceModel, AttendanceModel.user_id == UserModel.id)\
+         .filter(AttendanceModel.campaign_id.in_(campaign_ids))\
+         .group_by(UserModel.id, UserModel.full_name, UserModel.email)\
+         .order_by(func.sum(AttendanceModel.hours).desc())\
+         .limit(10).all()
+
+        top_volunteers = [
+            {
+                "user_id": v.id,
+                "full_name": v.full_name,
+                "email": v.email,
+                "total_hours": v.total_hours or 0.0,
+                "total_sessions": v.total_sessions
+            }
+            for v in top_volunteers_query
+        ]
+
+        return {
+            "total_campaigns": len(campaigns),
+            "campaigns_by_status": status_counts,
+            "total_registrations": total_registrations,
+            "attendance_rate": round(attendance_rate, 2),
+            "total_verified_hours": round(total_verified_hours, 2),
+            "top_volunteers": top_volunteers
+        }
