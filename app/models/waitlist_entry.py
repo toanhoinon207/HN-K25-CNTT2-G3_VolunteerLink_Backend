@@ -15,7 +15,7 @@ class WaitlistEntryModel(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     campaign_id = Column(Integer, ForeignKey("campaigns.id"))
-    position = Column(Integer, nullable=False)
+    position = Column(Integer, nullable=False , default=0)
     status = Column(String(20), default="WAITING")
     invited_at = Column(DateTime, nullable=True)
     response_deadline = Column(DateTime, nullable=True)

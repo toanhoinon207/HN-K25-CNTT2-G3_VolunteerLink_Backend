@@ -85,17 +85,23 @@ def create_registration(db : Session, user_id : int , campaign_id : int , messag
         return registration
 
     waitlist_entry = db.query(WaitlistEntryModel).filter_by(
-        user_id=user_id, campaign_id=campaign_id
+    user_id=user_id,
+    campaign_id=campaign_id
     ).first()
-    if waitlist_entry and waitlist_entry.status in ("WAITING", "INVITED"):
-        waitlist_entry.status = "ACCEPTED"
 
-    if old_registration and old_registration.status == "CANCELLED":
+    # Nếu người dùng đăng ký lại theo luồng thông thường,
+    # xóa bản ghi hàng chờ cũ để tránh bị trùng.
+    if old_registration and old_registration.status == "WAITLISTED":
+        if waitlist_entry:
+            db.delete(waitlist_entry)
+            waitlist_entry = None
+
+    if old_registration and old_registration.status in ("CANCELLED", "WAITLISTED"):
         old_registration.status = "PENDING"
         old_registration.message = message
         old_registration.rejection_reason = None
-        # Lần đăng ký mới sau khi hủy: cập nhật thời điểm gửi đơn.
         old_registration.created_at = now
+
         db.commit()
         db.refresh(old_registration)
         return old_registration
