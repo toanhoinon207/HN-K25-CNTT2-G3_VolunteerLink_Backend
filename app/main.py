@@ -31,6 +31,7 @@ from app.routers import (
     notification,
     certificates,
     waitlist,
+    hour_claims
 )
 
 
@@ -102,6 +103,7 @@ app.include_router(profile.router, prefix="/api")
 app.include_router(notification.router, prefix="/api")
 app.include_router(certificates.router, prefix="/api")
 app.include_router(waitlist.router, prefix="/api")
+app.include_router(hour_claims.router, prefix="/api") 
 
 @app.get("/")
 def root():

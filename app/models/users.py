@@ -24,7 +24,7 @@ class UserModel(Base):
     volunteer_profile = relationship("VolunteerProfileModel", back_populates = "user", uselist = False)
     registrations = relationship("RegistrationModel", back_populates = "user")
     notifications = relationship("NotificationModel", back_populates = "user")
-    hour_claims = relationship("HourClaimModel", back_populates = "user")
+    hour_claims = relationship("HourClaimModel",back_populates="user",foreign_keys="HourClaimModel.user_id")
     certificates = relationship("CertificateModel", back_populates = "user")
     attendance = relationship("AttendanceModel", back_populates= "user", foreign_keys="AttendanceModel.recorded_by")
     organization = relationship("OrganizationModel", back_populates = "owner", uselist = False)
