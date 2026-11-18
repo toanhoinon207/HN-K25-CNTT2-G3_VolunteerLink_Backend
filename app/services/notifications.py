@@ -8,8 +8,9 @@ def create_notification(
     user_id: int,
     title: str,
     content: str,
-    link: str = None
-):
+    link: str | None = None,
+) -> NotificationModel:
+    """Add a notification to the caller's transaction."""
     notification = NotificationModel(
         user_id=user_id,
         title=title,
