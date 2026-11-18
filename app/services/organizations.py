@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.models.organizations import OrganizationModel, OrganizationStatus
 from app.models.users import UserModel
 from app.schemas.organizations import OrganizationCreate, OrganizationUpdate
+from app.services.notifications import create_notification
 
 
 def get_organization_by_owner(db: Session, owner_id: int):
@@ -138,7 +139,7 @@ class OrganizationService:
 
         org = db.query(OrganizationModel).filter(
             OrganizationModel.id == org_id
-        ).first()
+        ).with_for_update().first()
 
         if not org:
             raise HTTPException(
@@ -182,6 +183,13 @@ class OrganizationService:
                 )
             org.status = OrganizationStatus.APPROVED
             user_owner.role = "ORGANIZER"
+            create_notification(
+                db=db,
+                user_id=user_owner.id,
+                title="Hồ sơ tổ chức đã được duyệt",
+                content=f'Hồ sơ của tổ chức "{org.name}" đã được phê duyệt.',
+                link="organizer-dashboard.html?tab=profile",
+            )
 
         elif action == "REJECT":
             if not reason or not reason.strip():
@@ -192,6 +200,14 @@ class OrganizationService:
 
             org.status = OrganizationStatus.REJECTED
             org.rejection_reason = reason.strip()
+            if user_owner is not None:
+                create_notification(
+                    db=db,
+                    user_id=user_owner.id,
+                    title="Hồ sơ tổ chức bị từ chối",
+                    content=f'Hồ sơ của tổ chức "{org.name}" bị từ chối. Lý do: {org.rejection_reason}',
+                    link="user-dashboard.html?tab=upgrade",
+                )
 
         db.commit()
         db.refresh(org)

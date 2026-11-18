@@ -25,7 +25,10 @@ from app.routers import (
     attendance,
     campaigns,
     organizations,
-    profile
+    profile,
+    notification,
+    certificates,
+    waitlist,
 )
 
 
@@ -78,7 +81,9 @@ app.include_router(attendance.router, prefix="/api")
 app.include_router(organizations.router, prefix="/api")
 app.include_router(organizations.admin_router, prefix="/api")
 app.include_router(profile.router, prefix="/api")
-
+app.include_router(notification.router, prefix="/api")
+app.include_router(certificates.router, prefix="/api")
+app.include_router(waitlist.router, prefix="/api")
 
 @app.get("/")
 def root():

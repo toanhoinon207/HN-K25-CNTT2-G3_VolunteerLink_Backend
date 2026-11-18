@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.users import UserModel
+from app.models.organizations import OrganizationModel
 from app.services.organizations import OrganizationService
 from app.schemas.organizations import (
     OrganizationCreate,
@@ -73,6 +74,14 @@ def update_my_organization(
 
 
 admin_router = APIRouter(prefix="/admin/organizations", tags=["Admin Organizations"])
+
+@admin_router.get("")
+def list_organizations(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("ADMIN")),
+):
+    return db.query(OrganizationModel).order_by(OrganizationModel.id.desc()).all()
+
 
 @admin_router.get("/pending")
 def list_pending_orgs(

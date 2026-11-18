@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.models.registration import RegistrationModel
 from app.models.campaigns import CampaignModel
 from app.models.users import UserModel
+from app.models.waitlist_entry import WaitlistEntryModel
 from app.services.notifications import create_notification
 
 def now_vietnam():
@@ -19,7 +20,7 @@ def create_registration(db : Session, user_id : int , campaign_id : int , messag
     db.query(UserModel).filter(UserModel.id == user_id).with_for_update().first()
 
     # 1. kiểm tra chiến dịch có tồn tại kh 
-    campaign = db.query(CampaignModel).filter(CampaignModel.id == campaign_id).first()
+    campaign = db.query(CampaignModel).filter(CampaignModel.id == campaign_id).with_for_update().first()
     if campaign is None : 
         raise HTTPException(status_code=404, detail="Không tìm thấy chiến dịch")
 
@@ -62,6 +63,12 @@ def create_registration(db : Session, user_id : int , campaign_id : int , messag
                 status_code=400,
                 detail="Lịch chiến dịch bị trùng với chiến dịch đã được duyệt"
             )
+
+    waitlist_entry = db.query(WaitlistEntryModel).filter_by(
+        user_id=user_id, campaign_id=campaign_id
+    ).first()
+    if waitlist_entry and waitlist_entry.status in ("WAITING", "INVITED"):
+        waitlist_entry.status = "ACCEPTED"
 
     if old_registration and old_registration.status == "CANCELLED":
         old_registration.status = "PENDING"
@@ -194,14 +201,12 @@ def approve_registration(
         registration.status = "APPROVED"
         registration.rejection_reason = None
 
-         # 7. Gửi thông báo qua module Notifications
-        # Gửi thông báo qua module Notifications
         create_notification(
-        db=db,
-        user_id=registration.user_id,
-        title="Đăng ký chiến dịch được duyệt",
-        content="Đăng ký tham gia chiến dịch của bạn đã được duyệt.",
-        link=f"/campaigns/{campaign_id}"
+            db=db,
+            user_id=registration.user_id,
+            title="Đăng ký chiến dịch được duyệt",
+            content=f'Đăng ký tham gia chiến dịch "{campaign.title}" đã được duyệt.',
+            link=f"user-dashboard.html?tab=overview&campaign_id={campaign_id}",
         )
         db.commit()
         db.refresh(registration)
