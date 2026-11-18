@@ -10,7 +10,7 @@ from app.models.attendances import AttendanceModel
 from app.models.registration import RegistrationModel
 from app.models.campaigns import CampaignModel
 from sqlalchemy import func
-from datetime import date
+from datetime import date, datetime
 
 def get_organization_by_owner(db: Session, owner_id: int):
     return db.query(OrganizationModel).filter(
@@ -198,66 +198,92 @@ class OrganizerDashboardService:
     @staticmethod
     def get_organizer_dashboard_stats(
         db: Session,
-        organizer_id: int,
+        current_user,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None
     ):
-      
-        campaign_query = db.query(CampaignModel).filter(CampaignModel.organizer_id == organizer_id)
+        # 1. Truy vấn các chiến dịch
+        campaign_query = db.query(CampaignModel)
         
-       
+        if current_user.role.lower() != "admin":
+            campaign_query = campaign_query.filter(CampaignModel.organization_id == current_user.id)
+        
+        # Lọc theo khoảng thời gian start_time của chiến dịch
         if start_date:
-            campaign_query = campaign_query.filter(CampaignModel.created_at >= start_date)
+            start_datetime = datetime.combine(start_date, datetime.min.time())
+            campaign_query = campaign_query.filter(CampaignModel.start_time >= start_datetime)
         if end_date:
-            campaign_query = campaign_query.filter(CampaignModel.created_at <= end_date)
+            end_datetime = datetime.combine(end_date, datetime.max.time())
+            campaign_query = campaign_query.filter(CampaignModel.start_time <= end_datetime)
             
         campaigns = campaign_query.all()
         campaign_ids = [c.id for c in campaigns]
 
-       
+        # 2. Thống kê số chiến dịch theo trạng thái và chuẩn bị danh sách chiến dịch chi tiết
         status_counts = {}
+        campaign_list = []
         for c in campaigns:
-            status_counts[c.status] = status_counts.get(c.status, 0) + 1
+            status_str = c.status.value if hasattr(c.status, "value") else str(c.status)
+            status_counts[status_str] = status_counts.get(status_str, 0) + 1
+            
+            # Lấy tên chiến dịch (thử thuộc tính title hoặc name)
+            campaign_title = getattr(c, "title", getattr(c, "name", f"Chiến dịch #{c.id}"))
+            
+            campaign_list.append({
+                "id": c.id,
+                "title": campaign_title,
+                "status": status_str,
+                "start_time": str(c.start_time) if c.start_time else None,
+                "end_time": str(c.end_time) if hasattr(c, "end_time") and c.end_time else None
+            })
 
         if not campaign_ids:
             return {
                 "total_campaigns": 0,
                 "campaigns_by_status": {},
+                "campaigns": [],
                 "total_registrations": 0,
                 "attendance_rate": 0.0,
                 "total_verified_hours": 0.0,
                 "top_volunteers": []
             }
 
-       
+        # 3. Tổng lượt đăng ký
         total_registrations = db.query(RegistrationModel).filter(
             RegistrationModel.campaign_id.in_(campaign_ids)
         ).count()
 
-       
-        total_attendances = db.query(AttendanceModel).filter(
-            AttendanceModel.campaign_id.in_(campaign_ids)
+        # 4. Tỉ lệ có mặt
+        total_attendances = db.query(AttendanceModel).join(
+            RegistrationModel, AttendanceModel.registration_id == RegistrationModel.id
+        ).filter(
+            RegistrationModel.campaign_id.in_(campaign_ids),
+            AttendanceModel.check_in_at.isnot(None)
         ).count()
         
         attendance_rate = (total_attendances / total_registrations * 100) if total_registrations > 0 else 0.0
 
-       
-        total_verified_hours = db.query(func.sum(AttendanceModel.hours)).filter(
-            AttendanceModel.campaign_id.in_(campaign_ids),
-            AttendanceModel.is_verified == True
-        ).scalar() or 0.0
+        # 5. Tổng số giờ đóng góp đã xác minh
+        total_minutes_sum = db.query(func.sum(AttendanceModel.total_minutes)).join(
+            RegistrationModel, AttendanceModel.registration_id == RegistrationModel.id
+        ).filter(
+            RegistrationModel.campaign_id.in_(campaign_ids)
+        ).scalar() or 0
+        
+        total_verified_hours = round(total_minutes_sum / 60.0, 2)
 
-       
+        # 6. Top 10 tình nguyện viên
         top_volunteers_query = db.query(
             UserModel.id,
             UserModel.full_name,
             UserModel.email,
-            func.sum(AttendanceModel.hours).label("total_hours"),
+            func.sum(AttendanceModel.total_minutes).label("total_minutes"),
             func.count(AttendanceModel.id).label("total_sessions")
-        ).join(AttendanceModel, AttendanceModel.user_id == UserModel.id)\
-         .filter(AttendanceModel.campaign_id.in_(campaign_ids))\
+        ).join(RegistrationModel, RegistrationModel.user_id == UserModel.id)\
+         .join(AttendanceModel, AttendanceModel.registration_id == RegistrationModel.id)\
+         .filter(RegistrationModel.campaign_id.in_(campaign_ids))\
          .group_by(UserModel.id, UserModel.full_name, UserModel.email)\
-         .order_by(func.sum(AttendanceModel.hours).desc())\
+         .order_by(func.sum(AttendanceModel.total_minutes).desc())\
          .limit(10).all()
 
         top_volunteers = [
@@ -265,7 +291,7 @@ class OrganizerDashboardService:
                 "user_id": v.id,
                 "full_name": v.full_name,
                 "email": v.email,
-                "total_hours": v.total_hours or 0.0,
+                "total_hours": round((v.total_minutes or 0) / 60.0, 2),
                 "total_sessions": v.total_sessions
             }
             for v in top_volunteers_query
@@ -274,8 +300,9 @@ class OrganizerDashboardService:
         return {
             "total_campaigns": len(campaigns),
             "campaigns_by_status": status_counts,
+            "campaigns": campaign_list,  # <--- Danh sách chi tiết các chiến dịch
             "total_registrations": total_registrations,
             "attendance_rate": round(attendance_rate, 2),
-            "total_verified_hours": round(total_verified_hours, 2),
+            "total_verified_hours": total_verified_hours,
             "top_volunteers": top_volunteers
         }
