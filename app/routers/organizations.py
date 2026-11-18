@@ -1,10 +1,12 @@
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, status, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.users import UserModel
-from app.services.organizations import OrganizationService
+from app.services.organizations import OrganizationService, OrganizerDashboardService
+from datetime import date
+from typing import Optional
 from app.schemas.organizations import (
     OrganizationCreate,
     OrganizationUpdate,
@@ -79,13 +81,13 @@ def list_pending_orgs(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user)
 ):
-    # Kiểm tra phân quyền Admin tại đây nếu cần
+    
     return OrganizationService.get_pending_organizations(db)
 
 @router.patch("/{org_id}/review")
 def review_org(
     org_id: int,
-    action: str, # "APPROVE" hoặc "REJECT"
+    action: str, 
     reason: str = None,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user)
@@ -95,4 +97,31 @@ def review_org(
         "message": f"Đã xử lý hồ sơ thành công.",
         "organization_id": updated_org.id,
         "status": updated_org.status
+    }
+    
+@router.get("/stats")
+def get_organizer_dashboard(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+    
+    if current_user.role not in ["ORGANIZER", "admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bạn không có quyền truy cập trang quản trị của Organizer."
+        )
+
+    
+    stats = OrganizerDashboardService.get_organizer_dashboard_stats(
+        db=db,
+        organizer_id=current_user.id,
+        start_date=start_date,
+        end_date=end_date
+    )
+
+    return {
+        "message": "Lấy dữ liệu thống kê dashboard thành công",
+        "data": stats
     }
