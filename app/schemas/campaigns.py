@@ -135,3 +135,16 @@ class CampaignDetailResponse(BaseModel):
     organization: OrganizationPublicResponse
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CampaignPendingItemResponse(CampaignResponse):
+    organization: OrganizationPublicResponse
+
+
+class CampaignReviewRequest(BaseModel):
+    action: Literal["APPROVE", "REJECT"]
+    reason: Optional[str] = Field(default=None, max_length=1000)
+
+
+class CampaignCancelRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=1000)
