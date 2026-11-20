@@ -239,7 +239,20 @@ class OrganizerDashboardService:
         campaign_query = db.query(CampaignModel)
         
         if current_user.role.lower() != "admin":
-            campaign_query = campaign_query.filter(CampaignModel.organization_id == current_user.id)
+            org = get_organization_by_owner(db, current_user.id)
+            if not org:
+                return {
+                    "total_campaigns": 0,
+                    "campaigns_by_status": {},
+                    "campaigns": [],
+                    "total_registrations": 0,
+                    "pending_registrations": 0,
+                    "approved_registrations": 0,
+                    "attendance_rate": 0.0,
+                    "total_verified_hours": 0.0,
+                    "top_volunteers": []
+                }
+            campaign_query = campaign_query.filter(CampaignModel.organization_id == org.id)
         
         # Lọc theo khoảng thời gian start_time của chiến dịch
         if start_date:
@@ -276,14 +289,24 @@ class OrganizerDashboardService:
                 "campaigns_by_status": {},
                 "campaigns": [],
                 "total_registrations": 0,
+                "pending_registrations": 0,
+                "approved_registrations": 0,
                 "attendance_rate": 0.0,
                 "total_verified_hours": 0.0,
                 "top_volunteers": []
             }
 
-        # 3. Tổng lượt đăng ký
+        # 3. Tổng lượt đăng ký & theo trạng thái
         total_registrations = db.query(RegistrationModel).filter(
             RegistrationModel.campaign_id.in_(campaign_ids)
+        ).count()
+        pending_registrations = db.query(RegistrationModel).filter(
+            RegistrationModel.campaign_id.in_(campaign_ids),
+            RegistrationModel.status == "PENDING"
+        ).count()
+        approved_registrations = db.query(RegistrationModel).filter(
+            RegistrationModel.campaign_id.in_(campaign_ids),
+            RegistrationModel.status == "APPROVED"
         ).count()
 
         # 4. Tỉ lệ có mặt
@@ -303,7 +326,7 @@ class OrganizerDashboardService:
             RegistrationModel.campaign_id.in_(campaign_ids)
         ).scalar() or 0
         
-        total_verified_hours = round(total_minutes_sum / 60.0, 2)
+        total_verified_hours = round(float(total_minutes_sum) / 60.0, 2)
 
         # 6. Top 10 tình nguyện viên
         top_volunteers_query = db.query(
@@ -324,7 +347,7 @@ class OrganizerDashboardService:
                 "user_id": v.id,
                 "full_name": v.full_name,
                 "email": v.email,
-                "total_hours": round((v.total_minutes or 0) / 60.0, 2),
+                "total_hours": round(float(v.total_minutes or 0) / 60.0, 2),
                 "total_sessions": v.total_sessions
             }
             for v in top_volunteers_query
@@ -335,6 +358,8 @@ class OrganizerDashboardService:
             "campaigns_by_status": status_counts,
             "campaigns": campaign_list,  # <--- Danh sách chi tiết các chiến dịch
             "total_registrations": total_registrations,
+            "pending_registrations": pending_registrations,
+            "approved_registrations": approved_registrations,
             "attendance_rate": round(attendance_rate, 2),
             "total_verified_hours": total_verified_hours,
             "top_volunteers": top_volunteers

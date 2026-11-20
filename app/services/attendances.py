@@ -217,7 +217,7 @@ def check_out(db, data, current_user):
 
     except Exception:
         db.rollback()
-        raise 
+        raise
 
 
 # =====================================================
@@ -496,3 +496,32 @@ def update_attendance_time(
     except Exception:
         db.rollback()
         raise
+
+
+def get_my_attendance_history(db: Session, user_id: int):
+    attendances = (
+        db.query(AttendanceModel)
+        .join(RegistrationModel, AttendanceModel.registration_id == RegistrationModel.id)
+        .options(
+            joinedload(AttendanceModel.registration).joinedload(RegistrationModel.campaign)
+        )
+        .filter(RegistrationModel.user_id == user_id)
+        .order_by(AttendanceModel.id.desc())
+        .all()
+    )
+
+    result = []
+    for att in attendances:
+        reg = att.registration
+        camp = reg.campaign if reg else None
+        result.append({
+            "id": att.id,
+            "registration_id": att.registration_id,
+            "campaign_id": camp.id if camp else None,
+            "campaign_title": camp.title if camp else f"Chiến dịch #{att.registration_id}",
+            "check_in_at": att.check_in_at,
+            "check_out_at": att.check_out_at,
+            "total_minutes": att.total_minutes,
+            "status": att.status,
+        })
+    return result

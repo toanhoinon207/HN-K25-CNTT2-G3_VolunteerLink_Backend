@@ -16,6 +16,7 @@ from app.schemas.campaigns import (
     CampaignResponse,
     CampaignReviewRequest,
     CampaignUpdate,
+    OrganizerCampaignResponse,
 )
 
 from app.services import campaigns as campaign_service
@@ -114,6 +115,19 @@ def list_public_campaigns(
         page=page,
         page_size=page_size
     )
+
+@router.get(
+    "/mine",
+    response_model=list[OrganizerCampaignResponse]
+)
+def list_my_campaigns(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(
+        require_role("ORGANIZER")
+    )
+):
+    return campaign_service.get_organizer_campaigns(db, current_user)
+
 
 @router.get(
     "/featured",

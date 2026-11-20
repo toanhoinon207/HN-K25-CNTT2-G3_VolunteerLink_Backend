@@ -7,9 +7,11 @@ Tài liệu API: http://127.0.0.1:8000/docs
 
 from contextlib import asynccontextmanager
 import asyncio
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import OperationalError
 
 from app import models
@@ -22,6 +24,7 @@ from app.routers import health, items, auth, registations, attendance, campaigns
 from app.routers import (
     health,
     auth,
+    admin,
     registations,
     attendance,
     campaigns,
@@ -91,14 +94,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
+(UPLOAD_DIR / "avatars").mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+
 app.include_router(health.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
-app.include_router(registations.router,prefix="/api")
-app.include_router(campaigns.router, prefix="/api")
-app.include_router(campaigns.admin_router, prefix="/api")
-app.include_router(attendance.router,prefix="/api")
+app.include_router(admin.router, prefix="/api")
 app.include_router(registations.router, prefix="/api")
 app.include_router(campaigns.router, prefix="/api")
+app.include_router(campaigns.admin_router, prefix="/api")
 app.include_router(attendance.router, prefix="/api")
 app.include_router(organizations.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")

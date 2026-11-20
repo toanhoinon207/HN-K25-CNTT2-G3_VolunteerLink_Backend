@@ -82,6 +82,10 @@ class CampaignResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class OrganizerCampaignResponse(CampaignResponse):
+    registered_count: int = 0
+
 class OrganizationPublicResponse(BaseModel):
     id: int
     name: str
