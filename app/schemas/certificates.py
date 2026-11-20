@@ -89,3 +89,8 @@ class IssueCertificate(BaseModel):
 
 class CertificateDetails(CertificateResponse):
     campaign_title: str
+
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
