@@ -1,7 +1,8 @@
 from decimal import Decimal
+from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
 
@@ -12,7 +13,17 @@ from app.models.certificate import CertificateModel
 from app.models.organizations import OrganizationModel
 from app.models.registration import RegistrationModel
 from app.models.users import UserModel
-from app.schemas.certificates import CertificateResponse
+from app.schemas.certificates import (
+    CertificatePublicResponse,
+    CertificateResponse,
+    CertificateRevoke,
+)
+from app.services.certificates import (
+    get_all_certificates,
+    get_certificate_by_code,
+    get_my_certificates,
+    revoke_certificate,
+)
 from app.services.notifications import create_notification
 
 
@@ -83,6 +94,84 @@ def eligible_recipients(
     ]
 
 
+# =====================================================
+# 1. USER: XEM DANH SÁCH CHỨNG NHẬN CỦA BẢN THÂN
+# GET /certificates/my-certificates
+# =====================================================
+
+@router.get(
+    "/my-certificates",
+    response_model=list[CertificateResponse]
+)
+def list_my_certificates(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(
+        require_role("USER")
+    )
+):
+    return get_my_certificates(
+        db,
+        current_user.id
+    )
+
+
+# =====================================================
+# 2. CÔNG KHAI: TRA CỨU CHỨNG NHẬN BẰNG MÃ
+# GET /certificates/verify/{certificate_code}
+# =====================================================
+
+@router.get(
+    "/verify/{certificate_code}",
+    response_model=CertificatePublicResponse
+)
+def verify_certificate(
+    certificate_code: str,
+    db: Session = Depends(get_db)
+):
+    try:
+        return get_certificate_by_code(
+            db,
+            certificate_code
+        )
+
+    except LookupError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
+
+# =====================================================
+# 3. ADMIN: XEM DANH SÁCH TẤT CẢ CHỨNG NHẬN
+# GET /certificates
+# =====================================================
+
+@router.get(
+    "",
+    response_model=list[CertificateResponse]
+)
+def list_all_certificates(
+    certificate_status: Optional[str] = None,
+    campaign_id: Optional[int] = None,
+
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(
+        require_role("ADMIN")
+    )
+):
+    return get_all_certificates(
+        db,
+        certificate_status,
+        campaign_id
+    )
+
+
 @router.post("", response_model=CertificateDetails, status_code=201)
 def issue_certificate(
     payload: IssueCertificate,
@@ -121,3 +210,42 @@ def issue_certificate(
     db.commit()
     db.refresh(certificate)
     return details(certificate)
+
+
+# =====================================================
+# 4. ADMIN: THU HỒI CHỨNG NHẬN
+# PATCH /certificates/{certificate_id}/revoke
+# =====================================================
+
+@router.patch(
+    "/{certificate_id}/revoke",
+    response_model=CertificateResponse
+)
+def revoke_certificate_api(
+    certificate_id: int,
+    data: CertificateRevoke,
+
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(
+        require_role("ADMIN")
+    )
+):
+    try:
+        return revoke_certificate(
+            db=db,
+            certificate_id=certificate_id,
+            admin_id=current_user.id,
+            reason=data.revoked_reason
+        )
+
+    except LookupError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        ) 

@@ -10,8 +10,10 @@ from sqlalchemy import (
     Numeric,
     DateTime,
     ForeignKey,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
+
 from app.db.session import Base
 
 
@@ -20,8 +22,19 @@ def now_vietnam():
         ZoneInfo("Asia/Ho_Chi_Minh")
     ).replace(tzinfo=None)
 
+
 class CertificateModel(Base):
     __tablename__ = "certificates"
+
+    # Mỗi tình nguyện viên chỉ có một chứng nhận
+    # cho mỗi chiến dịch, kể cả khi đã thu hồi.
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "campaign_id",
+            name="uq_certificate_user_campaign"
+        ),
+    )
 
     id = Column(
         Integer,
@@ -55,7 +68,7 @@ class CertificateModel(Base):
     issued_at = Column(
         DateTime,
         nullable=False,
-        default = now_vietnam 
+        default=now_vietnam
     )
 
     status = Column(
@@ -64,12 +77,37 @@ class CertificateModel(Base):
         nullable=False
     )
 
+    # Thông tin thu hồi
     revoked_reason = Column(
         Text,
         nullable=True
     )
 
-    # Relationships
-    user = relationship("UserModel",back_populates="certificates")
+    revoked_at = Column(
+        DateTime,
+        nullable=True
+    )
 
-    campaign = relationship("CampaignModel",back_populates="certificates")
+    revoked_by = Column(
+        Integer,
+        ForeignKey("users.id"),
+        nullable=True
+    )
+
+    # Relationships
+    user = relationship(
+        "UserModel",
+        back_populates="certificates",
+        foreign_keys=[user_id]
+    )
+
+    campaign = relationship(
+        "CampaignModel",
+        back_populates="certificates"
+    )
+
+    # Người thực hiện thu hồi (Admin)
+    revoker = relationship(
+        "UserModel",
+        foreign_keys=[revoked_by]
+    )
