@@ -304,8 +304,10 @@ def get_campaign_registrations(
     campaign_id: int,
     status: str = None
 ):
-    query = db.query(RegistrationModel).filter(
-        RegistrationModel.campaign_id == campaign_id
+    query = (
+        db.query(RegistrationModel)
+        .options(joinedload(RegistrationModel.user))
+        .filter(RegistrationModel.campaign_id == campaign_id)
     )
 
     if status:
@@ -313,7 +315,22 @@ def get_campaign_registrations(
             RegistrationModel.status == status
         )
 
-    return query.all()
+    regs = query.order_by(RegistrationModel.id.desc()).all()
+    return [
+        {
+            "id": r.id,
+            "user_id": r.user_id,
+            "campaign_id": r.campaign_id,
+            "status": r.status,
+            "message": r.message,
+            "rejection_reason": r.rejection_reason,
+            "created_at": r.created_at,
+            "user_name": r.user.full_name if r.user else None,
+            "user_email": r.user.email if r.user else None,
+            "user_phone": r.user.phone if r.user else None,
+        }
+        for r in regs
+    ]
 
 
 def get_my_registrations(db: Session, user_id: int):

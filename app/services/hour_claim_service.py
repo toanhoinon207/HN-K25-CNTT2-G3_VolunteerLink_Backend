@@ -119,6 +119,24 @@ def check_claim_access(
     )
 
 
+def verified_attendance_hours(db: Session, registration_id: int):
+    """Return decimal hours supported by a complete, consistent attendance record."""
+    attendance = db.query(AttendanceModel).filter(
+        AttendanceModel.registration_id == registration_id
+    ).first()
+    if not attendance or attendance.status != "PRESENT":
+        raise HTTPException(400, "Không có điểm danh hợp lệ để xác minh giờ")
+    start, end = attendance.check_in_at, attendance.check_out_at
+    if start is None or end is None or end <= start:
+        raise HTTPException(400, "Điểm danh CHECK-IN/CHECK-OUT chưa hợp lệ")
+    minutes = int(round((end - start).total_seconds() / 60))
+    if minutes <= 0 or attendance.total_minutes != minutes:
+        raise HTTPException(409, "Số phút điểm danh không khớp mốc thời gian; cần kiểm tra dữ liệu")
+    return (Decimal(minutes) / Decimal("60")).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+
+
 # =====================================================
 # 1. TNV: TẠO YÊU CẦU XÁC MINH GIỜ
 # =====================================================
@@ -164,31 +182,7 @@ def create_hour_claim(
                 detail="Chỉ được xác minh giờ khi chiến dịch đã hoàn thành"
             )
 
-        attendance = db.query(AttendanceModel).filter(
-            AttendanceModel.registration_id == registration.id
-        ).first()
-
-        if attendance is None:
-            raise HTTPException(
-                status_code=400,
-                detail="Bạn chưa có dữ liệu điểm danh"
-            )
-
-        if attendance.status != "PRESENT":
-            raise HTTPException(
-                status_code=400,
-                detail="Bạn không có trạng thái điểm danh hợp lệ"
-            )
-
-        if (
-            attendance.check_in_at is None
-            or attendance.check_out_at is None
-            or attendance.total_minutes <= 0
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="Dữ liệu điểm danh chưa đầy đủ"
-            )
+        actual_hours = verified_attendance_hours(db, registration.id)
 
         # Kiểm tra yêu cầu cũ
         existing_claims = db.query(HourClaimModel).filter(
@@ -214,14 +208,6 @@ def create_hour_claim(
                     status_code=409,
                     detail="Bạn đang có khiếu nại chờ Admin xử lý"
                 )
-
-        # Tính giờ thực tế
-        actual_hours = (
-            Decimal(attendance.total_minutes) / Decimal("60")
-        ).quantize(
-            Decimal("0.01"),
-            rounding=ROUND_HALF_UP
-        )
 
         claimed_hours = (
             data.claimed_hours
@@ -312,9 +298,22 @@ def get_hour_claims(
             HourClaimModel.appeal_status == appeal_status
         )
 
-    return query.order_by(
-        HourClaimModel.created_at.desc()
-    ).all()
+    claims = (
+        query.options(
+            joinedload(HourClaimModel.user),
+            joinedload(HourClaimModel.registration).joinedload(RegistrationModel.campaign),
+        )
+        .order_by(HourClaimModel.created_at.desc())
+        .all()
+    )
+    for c in claims:
+        setattr(c, "user_name", c.user.full_name if c.user else None)
+        setattr(
+            c,
+            "campaign_title",
+            c.registration.campaign.title if c.registration and c.registration.campaign else None,
+        )
+    return claims
 
 
 # =====================================================
@@ -327,7 +326,20 @@ def get_hour_claim_detail(
     current_user
 ):
 
-    claim = get_claim(db, claim_id)
+    claim = (
+        db.query(HourClaimModel)
+        .options(
+            joinedload(HourClaimModel.user),
+            joinedload(HourClaimModel.registration).joinedload(RegistrationModel.campaign),
+        )
+        .filter(HourClaimModel.id == claim_id)
+        .first()
+    )
+    if claim is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Không tìm thấy yêu cầu xác minh giờ đóng góp"
+        )
 
     check_claim_access(
         db,
@@ -335,6 +347,12 @@ def get_hour_claim_detail(
         current_user
     )
 
+    setattr(claim, "user_name", claim.user.full_name if claim.user else None)
+    setattr(
+        claim,
+        "campaign_title",
+        claim.registration.campaign.title if claim.registration and claim.registration.campaign else None,
+    )
     return claim
 
 
@@ -378,20 +396,35 @@ def review_hour_claim(
         )
 
         if claim.status != "PENDING":
-            raise HTTPException(
-                status_code=400,
-                detail="Yêu cầu này đã được xử lý trước đó"
-            )
+            raise HTTPException(400, "Yêu cầu này đã được xử lý trước đó")
+
+        campaign = db.query(CampaignModel).filter(
+            CampaignModel.id == registration.campaign_id
+        ).first()
+        if campaign is None or campaign.status != "COMPLETED":
+            raise HTTPException(400, "Chiến dịch chưa hoàn thành")
+
+        # Một registration không thể có hai kết quả xác minh cùng tồn tại.
+        other_verified = db.query(HourClaimModel.id).filter(
+            HourClaimModel.registration_id == registration.id,
+            HourClaimModel.id != claim.id,
+            HourClaimModel.status == "VERIFIED",
+        ).first()
+        if other_verified:
+            raise HTTPException(409, "Đã tồn tại yêu cầu xác minh giờ được duyệt")
 
         now = now_vietnam()
 
         if data.status == "VERIFIED":
-
+            actual_hours = verified_attendance_hours(db, registration.id)
             approved_hours = (
                 data.approved_hours
                 if data.approved_hours is not None
-                else claim.claimed_hours
+                else min(claim.claimed_hours, actual_hours)
             )
+
+            if approved_hours > actual_hours:
+                raise HTTPException(422, "Giờ duyệt vượt quá giờ điểm danh hợp lệ")
 
             if approved_hours <= 0:
                 raise HTTPException(
@@ -400,6 +433,7 @@ def review_hour_claim(
                 )
 
             claim.status = "VERIFIED"
+            claim.actual_hours = actual_hours
             claim.approved_hours = approved_hours
             claim.verified_by = current_user.id
             claim.verified_at = now
@@ -541,12 +575,21 @@ def review_hour_claim_appeal(
         now = now_vietnam()
 
         if data.appeal_status == "ACCEPTED":
-
+            duplicate = db.query(HourClaimModel.id).filter(
+                HourClaimModel.registration_id == claim.registration_id,
+                HourClaimModel.id != claim.id,
+                HourClaimModel.status == "VERIFIED",
+            ).first()
+            if duplicate:
+                raise HTTPException(409, "Đã tồn tại yêu cầu được xác minh cho đăng ký này")
+            actual_hours = verified_attendance_hours(db, claim.registration_id)
             approved_hours = (
                 data.approved_hours
                 if data.approved_hours is not None
-                else claim.claimed_hours
+                else min(claim.claimed_hours, actual_hours)
             )
+            if approved_hours > actual_hours:
+                raise HTTPException(422, "Giờ duyệt vượt quá giờ điểm danh hợp lệ")
 
             if approved_hours <= 0:
                 raise HTTPException(
@@ -559,6 +602,7 @@ def review_hour_claim_appeal(
             # Khiếu nại được chấp nhận:
             # Yêu cầu giờ đóng góp chuyển sang VERIFIED
             claim.status = "VERIFIED"
+            claim.actual_hours = actual_hours
             claim.approved_hours = approved_hours
 
             claim.verified_at = now

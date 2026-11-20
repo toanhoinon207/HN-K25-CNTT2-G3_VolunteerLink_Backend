@@ -89,7 +89,7 @@ def list_organizations(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(require_role("ADMIN")),
 ):
-    return db.query(OrganizationModel).order_by(OrganizationModel.id.desc()).all()
+    return OrganizationService.get_all_organizations(db)
 
 
 @admin_router.get("/pending")

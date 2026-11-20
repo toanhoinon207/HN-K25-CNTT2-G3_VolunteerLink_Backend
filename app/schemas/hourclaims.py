@@ -101,6 +101,8 @@ class HourClaimResponse(BaseModel):
     id: int
     registration_id: int
     user_id: int
+    user_name: Optional[str] = None
+    campaign_title: Optional[str] = None
 
     actual_hours: Decimal
     claimed_hours: Decimal
