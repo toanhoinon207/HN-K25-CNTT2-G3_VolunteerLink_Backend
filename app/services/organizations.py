@@ -5,12 +5,17 @@ from sqlalchemy.orm import Session
 from app.models.organizations import OrganizationModel, OrganizationStatus
 from app.models.users import UserModel
 from app.schemas.organizations import OrganizationCreate, OrganizationUpdate
+
 from typing import Optional
 from app.models.attendances import AttendanceModel
 from app.models.registration import RegistrationModel
 from app.models.campaigns import CampaignModel
 from sqlalchemy import func
 from datetime import date, datetime
+
+from app.services.notifications import create_notification
+
+
 
 def get_organization_by_owner(db: Session, owner_id: int):
     return db.query(OrganizationModel).filter(
@@ -143,7 +148,7 @@ class OrganizationService:
 
         org = db.query(OrganizationModel).filter(
             OrganizationModel.id == org_id
-        ).first()
+        ).with_for_update().first()
 
         if not org:
             raise HTTPException(
@@ -170,10 +175,30 @@ class OrganizationService:
         ).first()
 
         if action == "APPROVE":
+            if user_owner is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Không thể duyệt: tài khoản quản lý tổ chức không tồn tại."
+                )
+            if user_owner.status != "ACTIVE":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Không thể duyệt: tài khoản quản lý tổ chức không hoạt động."
+                )
+            if user_owner.role != "USER":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Không thể duyệt: tài khoản không còn vai trò USER."
+                )
             org.status = OrganizationStatus.APPROVED
-
-            if user_owner:
-                user_owner.role = "ORGANIZER"
+            user_owner.role = "ORGANIZER"
+            create_notification(
+                db=db,
+                user_id=user_owner.id,
+                title="Hồ sơ tổ chức đã được duyệt",
+                content=f'Hồ sơ của tổ chức "{org.name}" đã được phê duyệt.',
+                link="organizer-dashboard.html?tab=profile",
+            )
 
         elif action == "REJECT":
             if not reason or not reason.strip():
@@ -184,6 +209,14 @@ class OrganizationService:
 
             org.status = OrganizationStatus.REJECTED
             org.rejection_reason = reason.strip()
+            if user_owner is not None:
+                create_notification(
+                    db=db,
+                    user_id=user_owner.id,
+                    title="Hồ sơ tổ chức bị từ chối",
+                    content=f'Hồ sơ của tổ chức "{org.name}" bị từ chối. Lý do: {org.rejection_reason}',
+                    link="user-dashboard.html?tab=upgrade",
+                )
 
         db.commit()
         db.refresh(org)

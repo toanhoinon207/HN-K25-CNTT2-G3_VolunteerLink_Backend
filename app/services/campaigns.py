@@ -3,14 +3,20 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, or_, and_, case
 
-from app.models.campaigns import CampaignModel
+from app.models.campaigns import CampaignModel, now_vietnam
 from app.models.organizations import OrganizationModel, OrganizationStatus
 from app.models.registration import RegistrationModel
 from app.models.users import UserModel
-from app.schemas.campaigns import CampaignCreate, CampaignUpdate
+from app.schemas.campaigns import (
+    CampaignCancelRequest,
+    CampaignCreate,
+    CampaignReviewRequest,
+    CampaignUpdate,
+)
+from app.services.notifications import create_notification
 
 
 def to_naive_vn(dt: datetime) -> datetime:
@@ -196,4 +202,340 @@ def submit_campaign(
     db.commit()
     db.refresh(campaign)
 
+    return campaign
+
+
+def close_expired_campaigns(db: Session) -> int:
+    """Tự động chuyển các chiến dịch OPEN đã quá hạn đăng ký sang CLOSED."""
+    now = now_vietnam()
+    updated = (
+        db.query(CampaignModel)
+        .filter(
+            CampaignModel.status == "OPEN",
+            CampaignModel.registration_deadline <= now,
+        )
+        .update(
+            {
+                CampaignModel.status: "CLOSED",
+                CampaignModel.updated_at: now,
+            },
+            synchronize_session=False,
+        )
+    )
+    if updated:
+        db.commit()
+    return updated
+
+
+def get_public_campaign_query(db: Session):
+    return (
+        db.query(CampaignModel)
+        .join(CampaignModel.organization)
+        .options(joinedload(CampaignModel.organization))
+        .filter(
+            CampaignModel.status.in_(
+                ["OPEN", "CLOSED", "COMPLETED"]
+            ),
+            OrganizationModel.status
+            == OrganizationStatus.APPROVED
+        )
+    )
+
+
+def search_campaigns(query, keyword: str | None):
+    if keyword and keyword.strip():
+        query = query.filter(
+            CampaignModel.title.ilike(
+                f"%{keyword.strip()}%"
+            )
+        )
+
+    return query
+
+
+def filter_campaigns(query, category: str | None):
+    if category and category.strip():
+        query = query.filter(
+            CampaignModel.category == category.strip()
+        )
+
+    return query
+
+
+def sort_campaigns(query, sort: str | None = None):
+    if sort == "oldest":
+        return query.order_by(
+            CampaignModel.updated_at.asc(),
+            CampaignModel.id.asc()
+        )
+    if sort == "start_asc":
+        return query.order_by(
+            CampaignModel.start_time.asc(),
+            CampaignModel.id.asc()
+        )
+    if sort == "deadline_asc":
+        return query.order_by(
+            CampaignModel.registration_deadline.asc(),
+            CampaignModel.id.asc()
+        )
+    return query.order_by(
+        CampaignModel.updated_at.desc(),
+        CampaignModel.id.desc()
+    )
+
+
+def paginate_campaigns(query, page: int, page_size: int):
+    offset = (page - 1) * page_size
+
+    return query.offset(offset).limit(page_size)
+
+
+def get_public_campaigns(
+    db: Session,
+    keyword: str | None = None,
+    category: str | None = None,
+    sort: str | None = None,
+    page: int = 1,
+    page_size: int = 6
+):
+    close_expired_campaigns(db)
+    query = get_public_campaign_query(db)
+    query = search_campaigns(query, keyword)
+    query = filter_campaigns(query, category)
+    total = query.order_by(None).count()
+    query = sort_campaigns(query, sort)
+    query = paginate_campaigns(
+        query, page, page_size
+    )
+
+    campaigns = query.all()
+
+    return {
+        "items": campaigns,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (
+            total + page_size - 1
+        ) // page_size
+    }
+
+
+def get_public_campaign_detail(
+    db: Session,
+    campaign_id: int
+):
+    close_expired_campaigns(db)
+    campaign = (
+        get_public_campaign_query(db)
+        .filter(CampaignModel.id == campaign_id)
+        .first()
+    )
+
+    if campaign is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Không tìm thấy chiến dịch công khai"
+        )
+
+    approved_count = (
+        db.query(func.count(RegistrationModel.id))
+        .filter(
+            RegistrationModel.campaign_id == campaign_id,
+            RegistrationModel.status == "APPROVED"
+        )
+        .scalar()
+    ) or 0
+
+    campaign.approved_count = approved_count
+
+    campaign.remaining_slots = max(
+        campaign.max_participants - approved_count,
+        0
+    )
+
+    return campaign
+
+
+def get_featured_campaigns(db: Session, limit: int = 3):
+    close_expired_campaigns(db)
+    now = datetime.now(
+        ZoneInfo("Asia/Ho_Chi_Minh")
+    ).replace(tzinfo=None)
+
+    # Thống kê số đăng ký của mỗi chiến dịch
+    stats = (
+        db.query(
+            RegistrationModel.campaign_id,
+            func.count(RegistrationModel.id).label("total"),
+            func.count(
+                case(
+                    (RegistrationModel.status == "APPROVED",
+                     RegistrationModel.id)
+                )
+            ).label("approved")
+        )
+        .filter(
+            RegistrationModel.status.in_(["PENDING", "APPROVED"])
+        )
+        .group_by(RegistrationModel.campaign_id)
+        .subquery()
+    )
+
+    campaigns = (
+        db.query(CampaignModel)
+        .join(CampaignModel.organization)
+        .outerjoin(
+            stats,
+            CampaignModel.id == stats.c.campaign_id
+        )
+        .filter(
+            OrganizationModel.status == OrganizationStatus.APPROVED,
+            CampaignModel.status == "OPEN",
+            CampaignModel.registration_deadline > now,
+            CampaignModel.start_time > now,
+            CampaignModel.max_participants
+                > func.coalesce(stats.c.approved, 0)
+        )
+        .order_by(
+            func.coalesce(stats.c.total, 0).desc(),
+            CampaignModel.start_time.asc(),
+            CampaignModel.id.asc()
+        )
+        .limit(limit)
+        .all()
+    )
+
+    return campaigns
+
+
+def get_pending_campaigns(db: Session):
+    return (
+        db.query(CampaignModel)
+        .options(joinedload(CampaignModel.organization))
+        .filter(CampaignModel.status == "PENDING")
+        .order_by(CampaignModel.updated_at.asc(), CampaignModel.id.asc())
+        .all()
+    )
+
+
+def review_campaign(
+    db: Session,
+    campaign_id: int,
+    data: CampaignReviewRequest,
+):
+    campaign = (
+        db.query(CampaignModel)
+        .options(joinedload(CampaignModel.organization))
+        .filter(CampaignModel.id == campaign_id)
+        .first()
+    )
+
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Không tìm thấy chiến dịch")
+
+    if campaign.status != "PENDING":
+        raise HTTPException(
+            status_code=409,
+            detail="Chỉ có thể kiểm duyệt chiến dịch đang ở trạng thái PENDING",
+        )
+
+    if data.action == "APPROVE":
+        if campaign.registration_deadline <= now_vietnam():
+            raise HTTPException(
+                status_code=409,
+                detail="Không thể duyệt chiến dịch đã quá hạn đăng ký",
+            )
+        campaign.status = "OPEN"
+        campaign.reason = None
+        if campaign.organization:
+            create_notification(
+                db=db,
+                user_id=campaign.organization.owner_id,
+                title="Chiến dịch đã được phê duyệt",
+                content=f"Chiến dịch '{campaign.title}' đã được phê duyệt và mở đăng ký.",
+                link=f"/campaigns/{campaign.id}",
+            )
+    else:
+        reason = (data.reason or "").strip()
+        if not reason:
+            raise HTTPException(
+                status_code=422,
+                detail="Vui lòng nhập lý do từ chối chiến dịch",
+            )
+        campaign.status = "DRAFT"
+        campaign.reason = reason
+        if campaign.organization:
+            create_notification(
+                db=db,
+                user_id=campaign.organization.owner_id,
+                title="Chiến dịch bị từ chối",
+                content=f"Chiến dịch '{campaign.title}' bị từ chối. Lý do: {reason}",
+                link=f"/campaigns/{campaign.id}",
+            )
+
+    db.commit()
+    db.refresh(campaign)
+    return campaign
+
+
+def cancel_campaign(
+    db: Session,
+    campaign_id: int,
+    data: CampaignCancelRequest,
+    current_user: UserModel,
+):
+    organization = get_approved_organization(db, current_user.id)
+
+    campaign = (
+        db.query(CampaignModel)
+        .filter(CampaignModel.id == campaign_id)
+        .first()
+    )
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Không tìm thấy chiến dịch")
+
+    if campaign.organization_id != organization.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Bạn không có quyền hủy chiến dịch này",
+        )
+
+    if campaign.status in ("COMPLETED", "CANCELLED"):
+        raise HTTPException(
+            status_code=409,
+            detail="Không thể hủy chiến dịch đã hoàn thành hoặc đã bị hủy",
+        )
+
+    reason = data.reason.strip()
+    if not reason:
+        raise HTTPException(
+            status_code=422,
+            detail="Vui lòng nhập lý do hủy chiến dịch",
+        )
+
+    campaign.status = "CANCELLED"
+    campaign.reason = reason
+
+    active_registrations = (
+        db.query(RegistrationModel)
+        .filter(
+            RegistrationModel.campaign_id == campaign.id,
+            RegistrationModel.status.in_(["PENDING", "APPROVED"]),
+        )
+        .all()
+    )
+
+    for registration in active_registrations:
+        registration.status = "CANCELLED"
+        create_notification(
+            db=db,
+            user_id=registration.user_id,
+            title="Chiến dịch đã bị hủy",
+            content=f"Chiến dịch '{campaign.title}' đã bị hủy. Lý do: {reason}",
+            link=f"/campaigns/{campaign.id}",
+        )
+
+    db.commit()
+    db.refresh(campaign)
     return campaign

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.core.security import decode_access_token
 from app.models import UserModel
+from app.models.auth_sessions import AuthSessionModel, now_utc
 
 
 def get_current_user(
@@ -26,6 +27,9 @@ def get_current_user(
             )
 
         user_id = int(user_id)
+        sid = payload.get("sid")
+        if not isinstance(sid, str) or not sid:
+            raise ValueError("TOKEN_INVALID")
 
     except (ValueError, TypeError) as exc:
         if str(exc) == "TOKEN_EXPIRED":
@@ -38,6 +42,15 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token không hợp lệ"
         )
+
+    auth_session = db.query(AuthSessionModel).filter(
+        AuthSessionModel.id == sid,
+        AuthSessionModel.user_id == user_id,
+        AuthSessionModel.revoked_at.is_(None),
+        AuthSessionModel.expires_at > now_utc()
+    ).first()
+    if auth_session is None:
+        raise HTTPException(status_code=401, detail="Phiên đăng nhập đã hết hạn hoặc bị thu hồi")
 
     user = db.query(UserModel).filter(
         UserModel.id == user_id
