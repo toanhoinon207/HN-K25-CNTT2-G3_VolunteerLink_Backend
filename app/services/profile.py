@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from app.models.users import UserModel
 from app.models.volunteer_profiles import VolunteerProfileModel
 from app.models.certificate import CertificateModel
+from app.models.attendances import AttendanceModel
+from app.models.registration import RegistrationModel
 from app.models.auth_sessions import AuthSessionModel, now_utc
 
 from app.schemas.users import (
@@ -17,9 +19,18 @@ from app.schemas.volunteer_profile import VolunteerProfileUpdate
 from app.core.security import hash_password, verify_password
 
 
-# 1. Tính tổng giờ đóng góp
-def get_total_hours(db: Session, user_id: int):
-    total = db.query(
+# 1. Tính tổng giờ đóng góp (kết hợp module Điểm danh & Chứng nhận)
+def get_total_hours(db: Session, user_id: int) -> float:
+    # 1.1. Lấy danh sách ID các chiến dịch đã có chứng nhận chính thức (ACTIVE)
+    cert_campaign_ids = [
+        row[0] for row in db.query(CertificateModel.campaign_id).filter(
+            CertificateModel.user_id == user_id,
+            CertificateModel.status == "ACTIVE"
+        ).all()
+    ]
+
+    # Tổng giờ từ module Chứng nhận
+    cert_hours = db.query(
         func.coalesce(
             func.sum(CertificateModel.total_hours), 0
         )
@@ -28,6 +39,26 @@ def get_total_hours(db: Session, user_id: int):
         CertificateModel.status == "ACTIVE"
     ).scalar()
 
+    # 1.2. Tổng giờ từ module Điểm danh (status == PRESENT)
+    att_query = db.query(
+        func.coalesce(
+            func.sum(AttendanceModel.total_minutes), 0
+        )
+    ).join(
+        RegistrationModel, AttendanceModel.registration_id == RegistrationModel.id
+    ).filter(
+        RegistrationModel.user_id == user_id,
+        AttendanceModel.status == "PRESENT"
+    )
+
+    # Loại trừ chiến dịch đã có chứng nhận để tránh tính trùng giờ
+    if cert_campaign_ids:
+        att_query = att_query.filter(~RegistrationModel.campaign_id.in_(cert_campaign_ids))
+
+    uncertified_att_minutes = att_query.scalar()
+    uncertified_att_hours = round(float(uncertified_att_minutes) / 60.0, 1)
+
+    total = round(float(cert_hours) + uncertified_att_hours, 1)
     return float(total)
 
 
@@ -89,7 +120,7 @@ def update_volunteer_profile(
     user: UserModel,
     data: VolunteerProfileUpdate
 ):
-    if user.role != "USER":
+    if user.role not in ["USER", "ORGANIZER"]:
         raise HTTPException(
             status_code=403,
             detail="Chỉ tình nguyện viên được cập nhật thông tin này"
@@ -164,7 +195,7 @@ def change_password(
 def get_public_profile(db: Session, user_id: int):
     user = db.query(UserModel).filter(
         UserModel.id == user_id,
-        UserModel.role == "USER",
+        UserModel.role.in_(["USER", "ORGANIZER"]),
         UserModel.status == "ACTIVE"
     ).first()
 
@@ -178,11 +209,23 @@ def get_public_profile(db: Session, user_id: int):
         VolunteerProfileModel.user_id == user.id
     ).first()
 
+    campaigns_count = db.query(func.count(RegistrationModel.id)).filter(
+        RegistrationModel.user_id == user.id,
+        RegistrationModel.status == "APPROVED"
+    ).scalar() or 0
+
+    certs_count = db.query(func.count(CertificateModel.id)).filter(
+        CertificateModel.user_id == user.id,
+        CertificateModel.status == "ACTIVE"
+    ).scalar() or 0
+
     return {
         "id": user.id,
         "full_name": user.full_name,
         "avatar_url": user.avatar_url,
         "skills": profile.skills if profile else None,
         "area": profile.area if profile else None,
-        "total_hours": get_total_hours(db, user.id)
+        "total_hours": get_total_hours(db, user.id),
+        "certificates_count": certs_count,
+        "campaigns_count": campaigns_count
     }

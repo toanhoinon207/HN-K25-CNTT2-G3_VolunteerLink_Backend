@@ -31,8 +31,8 @@ from app.routers import (
     notification,
     certificates,
     waitlist,
+    admin_users,
     hour_claims
-)
 
 
 @asynccontextmanager
@@ -107,6 +107,7 @@ app.include_router(profile.router, prefix="/api")
 app.include_router(notification.router, prefix="/api")
 app.include_router(certificates.router, prefix="/api")
 app.include_router(waitlist.router, prefix="/api")
+app.include_router(admin_users.router, prefix="/api")
 app.include_router(hour_claims.router, prefix="/api") 
 
 @app.get("/")
