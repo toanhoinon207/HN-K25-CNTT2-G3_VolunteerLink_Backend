@@ -54,7 +54,7 @@ def _invite_next(db: Session, campaign: CampaignModel):
         user_id=entry.user_id,
         title="Bạn được mời từ danh sách chờ",
         content=f'Chiến dịch "{campaign.title}" đã có chỗ. Vui lòng phản hồi lời mời trong vòng 24 giờ.',
-        link=f"/campaigns/{campaign.id}",
+        link=f"campaign_detail.html?id={campaign.id}",
     )
     return entry
 
@@ -146,7 +146,7 @@ def respond_to_invite(db: Session, waitlist_id: int, user_id: int, response: str
         create_notification(
             db, user_id, "Đăng ký chiến dịch được duyệt",
             f'Đăng ký tham gia chiến dịch "{campaign.title}" đã được duyệt.',
-            f"/campaigns/{campaign.id}",
+            f"campaign_detail.html?id={campaign.id}",
         )
 
     db.commit()

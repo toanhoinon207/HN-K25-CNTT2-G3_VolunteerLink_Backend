@@ -63,7 +63,7 @@ def validate_campaign_time(campaign, now):
         raise HTTPException(400, "Chiến dịch không cho phép điểm danh")
 
 
-def validate_code(campaign, code, now):
+def validate_code(campaign, code, now, expected_type):
     if campaign.attendance_code is None:
         raise HTTPException(400, "Chiến dịch chưa có mã điểm danh")
 
@@ -72,6 +72,11 @@ def validate_code(campaign, code, now):
         or now >= campaign.attendance_code_expires_at
     ):
         raise HTTPException(400, "Mã điểm danh đã hết hạn")
+
+    # Không dùng mã CHECK-IN để CHECK-OUT hoặc ngược lại.
+    # Mã cũ (type=NULL) phải được cấp lại theo loại rõ ràng.
+    if campaign.attendance_code_type != expected_type:
+        raise HTTPException(400, f"Cần mã {expected_type} hợp lệ")
 
     if not secrets.compare_digest(campaign.attendance_code, code):
         raise HTTPException(400, "Mã điểm danh không hợp lệ")
@@ -95,7 +100,11 @@ def get_approved_registration(db, campaign_id, user_id):
 
 def create_attendance_code(db, data, current_user):
     try:
-        campaign = get_campaign(db, data.campaign_id)
+        campaign = db.query(CampaignModel).filter(
+            CampaignModel.id == data.campaign_id
+        ).with_for_update().first()
+        if campaign is None:
+            raise HTTPException(404, "Chiến dịch không tồn tại")
         now = now_vietnam()
 
         organization = db.query(OrganizationModel).filter(
@@ -111,6 +120,11 @@ def create_attendance_code(db, data, current_user):
 
         validate_campaign_time(campaign, now)
 
+        # CHECK-OUT là mã kết thúc cuối cùng. Không cho ghi đè hoặc cấp lại
+        # sau khi đã phát: nếu không, hết hạn của mã đầu tiên sẽ bị bỏ qua.
+        if campaign.attendance_code_type == "CHECK_OUT":
+            raise HTTPException(409, "Đã phát mã CHECK-OUT; không thể cấp lại")
+
         code = generate_code()
         while db.query(CampaignModel).filter(
             CampaignModel.attendance_code == code,
@@ -125,12 +139,14 @@ def create_attendance_code(db, data, current_user):
 
         campaign.attendance_code = code
         campaign.attendance_code_expires_at = expires_at
+        campaign.attendance_code_type = data.code_type
 
         db.commit()
 
         return {
             "code": code,
-            "expires_at": expires_at
+            "expires_at": expires_at,
+            "code_type": data.code_type
         }
 
     except Exception:
@@ -149,7 +165,7 @@ def check_in(db, data, current_user):
             db, data.campaign_id, current_user.id
         )
 
-        validate_code(campaign, data.code, now)
+        validate_code(campaign, data.code, now, "CHECK_IN")
 
         existing = db.query(AttendanceModel).filter(
             AttendanceModel.registration_id == registration.id
@@ -192,7 +208,7 @@ def check_out(db, data, current_user):
             db, data.campaign_id, current_user.id
         )
 
-        validate_code(campaign, data.code, now)
+        validate_code(campaign, data.code, now, "CHECK_OUT")
 
         attendance = db.query(AttendanceModel).filter(
             AttendanceModel.registration_id == registration.id

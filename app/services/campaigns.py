@@ -148,6 +148,10 @@ def create_campaign(
         exclude={"organization_id"}
     )
 
+    for dt_field in ("start_time", "end_time", "registration_deadline"):
+        if dt_field in payload and payload[dt_field] is not None:
+            payload[dt_field] = to_naive_vn(payload[dt_field])
+
     validate_campaign(payload)
 
     campaign = CampaignModel(
@@ -178,6 +182,10 @@ def update_campaign(
     )
 
     updates = data.model_dump(exclude_unset=True, exclude_none=True)
+
+    for dt_field in ("start_time", "end_time", "registration_deadline"):
+        if dt_field in updates and updates[dt_field] is not None:
+            updates[dt_field] = to_naive_vn(updates[dt_field])
 
     merged = {
         column.name: getattr(campaign, column.name)
@@ -239,6 +247,31 @@ def submit_campaign(
     db.refresh(campaign)
 
     return campaign
+
+
+def complete_expired_checkout_campaigns(db: Session) -> int:
+    """COMPLETED chỉ khi mã CHECK_OUT cuối cùng hết hạn thực tế.
+
+    Không chờ đủ lượt check-out: trường hợp bỏ lỡ xử lý qua khiếu nại.
+    Mã CHECK_IN cũ (NULL type) không được làm chiến dịch hoàn thành.
+    """
+    now = now_vietnam()
+    updated = (
+        db.query(CampaignModel)
+        .filter(
+            CampaignModel.status.in_(["OPEN", "CLOSED"]),
+            CampaignModel.attendance_code_type == "CHECK_OUT",
+            CampaignModel.attendance_code_expires_at.isnot(None),
+            CampaignModel.attendance_code_expires_at <= now,
+        )
+        .update(
+            {CampaignModel.status: "COMPLETED", CampaignModel.updated_at: now},
+            synchronize_session=False,
+        )
+    )
+    if updated:
+        db.commit()
+    return updated
 
 
 def close_expired_campaigns(db: Session) -> int:
@@ -490,7 +523,7 @@ def review_campaign(
                 user_id=campaign.organization.owner_id,
                 title="Chiến dịch đã được phê duyệt",
                 content=f"Chiến dịch '{campaign.title}' đã được phê duyệt và mở đăng ký.",
-                link=f"/campaigns/{campaign.id}",
+                link=f"campaign_detail.html?id={campaign.id}",
             )
     else:
         reason = (data.reason or "").strip()
@@ -507,7 +540,7 @@ def review_campaign(
                 user_id=campaign.organization.owner_id,
                 title="Chiến dịch bị từ chối",
                 content=f"Chiến dịch '{campaign.title}' bị từ chối. Lý do: {reason}",
-                link=f"/campaigns/{campaign.id}",
+                link=f"campaign_detail.html?id={campaign.id}",
             )
 
     db.commit()
@@ -569,7 +602,7 @@ def cancel_campaign(
             user_id=registration.user_id,
             title="Chiến dịch đã bị hủy",
             content=f"Chiến dịch '{campaign.title}' đã bị hủy. Lý do: {reason}",
-            link=f"/campaigns/{campaign.id}",
+            link=f"campaign_detail.html?id={campaign.id}",
         )
 
     db.commit()

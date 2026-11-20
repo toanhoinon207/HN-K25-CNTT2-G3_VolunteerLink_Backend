@@ -1,6 +1,6 @@
 
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.organizations import OrganizationModel, OrganizationStatus
 from app.models.users import UserModel
@@ -130,12 +130,51 @@ def update_my_organization_service(
 class OrganizationService:
 
     @staticmethod
+    def _serialize_admin_org(org: OrganizationModel) -> dict:
+        owner = org.owner
+        status_val = org.status.value if hasattr(org.status, "value") else str(org.status)
+        return {
+            "id": org.id,
+            "name": org.name,
+            "description": org.description,
+            "logo_url": org.logo_url,
+            "address": org.address,
+            "email": org.email,
+            "phone": org.phone,
+            "document_url": org.document_url,
+            "status": status_val,
+            "owner_id": org.owner_id,
+            "owner_name": owner.full_name if owner else None,
+            "owner_email": owner.email if owner else None,
+            "owner_phone": owner.phone if owner else None,
+            "owner_status": owner.status if owner else None,
+            "rejection_reason": org.rejection_reason,
+            "created_at": org.created_at,
+            "updated_at": org.updated_at,
+        }
+
+    @staticmethod
+    def get_all_organizations(db: Session):
+        """Lấy toàn bộ hồ sơ tổ chức kèm thông tin chủ sở hữu cho Admin."""
+        orgs = (
+            db.query(OrganizationModel)
+            .options(joinedload(OrganizationModel.owner))
+            .order_by(OrganizationModel.id.desc())
+            .all()
+        )
+        return [OrganizationService._serialize_admin_org(org) for org in orgs]
+
+    @staticmethod
     def get_pending_organizations(db: Session):
         """Lấy danh sách hồ sơ đang chờ duyệt."""
-
-        return db.query(OrganizationModel).filter(
-            OrganizationModel.status == OrganizationStatus.PENDING
-        ).all()
+        orgs = (
+            db.query(OrganizationModel)
+            .options(joinedload(OrganizationModel.owner))
+            .filter(OrganizationModel.status == OrganizationStatus.PENDING)
+            .order_by(OrganizationModel.id.desc())
+            .all()
+        )
+        return [OrganizationService._serialize_admin_org(org) for org in orgs]
 
     @staticmethod
     def review_organization(
@@ -317,7 +356,7 @@ class OrganizerDashboardService:
             AttendanceModel.check_in_at.isnot(None)
         ).count()
         
-        attendance_rate = (total_attendances / total_registrations * 100) if total_registrations > 0 else 0.0
+        attendance_rate = (total_attendances / approved_registrations * 100) if approved_registrations > 0 else 0.0
 
         # 5. Tổng số giờ đóng góp đã xác minh
         total_minutes_sum = db.query(func.sum(AttendanceModel.total_minutes)).join(
@@ -337,7 +376,10 @@ class OrganizerDashboardService:
             func.count(AttendanceModel.id).label("total_sessions")
         ).join(RegistrationModel, RegistrationModel.user_id == UserModel.id)\
          .join(AttendanceModel, AttendanceModel.registration_id == RegistrationModel.id)\
-         .filter(RegistrationModel.campaign_id.in_(campaign_ids))\
+         .filter(
+             RegistrationModel.campaign_id.in_(campaign_ids),
+             AttendanceModel.check_in_at.isnot(None)
+         )\
          .group_by(UserModel.id, UserModel.full_name, UserModel.email)\
          .order_by(func.sum(AttendanceModel.total_minutes).desc())\
          .limit(10).all()
