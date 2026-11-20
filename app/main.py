@@ -16,9 +16,8 @@ from app import models
 from app.core.config import settings
 from app.db.session import Base, engine, SessionLocal
 from app.services.waitlist import process_expired_invites
-
-# Import hàm seed dữ liệu
 from app.db.seed import run_seed
+from app.routers import health, items, auth, registations, attendance, campaigns, organizations, admin
 
 from app.routers import (
     health,
@@ -102,16 +101,9 @@ app.include_router(registations.router, prefix="/api")
 app.include_router(campaigns.router, prefix="/api")
 app.include_router(attendance.router, prefix="/api")
 app.include_router(organizations.router, prefix="/api")
-app.include_router(organizations.admin_router, prefix="/api")
-app.include_router(profile.router, prefix="/api")
-app.include_router(notification.router, prefix="/api")
-app.include_router(certificates.router, prefix="/api")
-app.include_router(waitlist.router, prefix="/api")
-app.include_router(admin_users.router, prefix="/api")
-app.include_router(hour_claims.router, prefix="/api") 
+app.include_router(admin.router, prefix="/api")
+
 
 @app.get("/")
 def root():
-    return {
-        "message": f"{settings.APP_NAME} đang chạy. Xem tài liệu API tại /docs"
-    }
+    return {"message": f"{settings.APP_NAME} đang chạy. Xem tài liệu API tại /docs"}
