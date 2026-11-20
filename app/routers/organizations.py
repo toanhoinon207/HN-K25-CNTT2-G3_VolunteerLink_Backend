@@ -10,11 +10,6 @@ from datetime import date
 from typing import Optional
 
 import traceback
-
-from app.models.organizations import OrganizationModel
-from app.services.organizations import OrganizationService
-
-
 from app.schemas.organizations import (
     OrganizationCreate,
     OrganizationUpdate,
@@ -144,3 +139,4 @@ def get_organizer_dashboard(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    

@@ -406,3 +406,4 @@ class OrganizerDashboardService:
             "total_verified_hours": total_verified_hours,
             "top_volunteers": top_volunteers
         }
+        

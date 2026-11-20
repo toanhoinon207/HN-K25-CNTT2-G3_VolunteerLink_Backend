@@ -23,6 +23,7 @@ from app.services.campaigns import complete_expired_checkout_campaigns
 
 # Import hàm seed dữ liệu
 from app.db.seed import run_seed
+from app.routers import health, items, auth, registations, attendance, campaigns, organizations, admin
 
 from app.routers import (
     health,
@@ -37,9 +38,10 @@ from app.routers import (
     certificates,
     waitlist,
     hour_claims,
-    attendance_appeals
+    attendance_appeals,
+    admin_users,
+    hour_claims
 )
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -127,6 +129,4 @@ app.include_router(attendance_appeals.router, prefix="/api")
 
 @app.get("/")
 def root():
-    return {
-        "message": f"{settings.APP_NAME} đang chạy. Xem tài liệu API tại /docs"
-    }
+    return {"message": f"{settings.APP_NAME} đang chạy. Xem tài liệu API tại /docs"}

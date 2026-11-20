@@ -24,3 +24,5 @@ class PublicProfileResponse(BaseModel):
     skills: str | None = None
     area: str | None = None
     total_hours: float = 0
+    certificates_count: int = 0
+    campaigns_count: int = 0
