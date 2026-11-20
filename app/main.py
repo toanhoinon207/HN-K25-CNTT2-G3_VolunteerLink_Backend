@@ -23,25 +23,12 @@ from app.services.campaigns import complete_expired_checkout_campaigns
 
 # Import hàm seed dữ liệu
 from app.db.seed import run_seed
-from app.routers import health, items, auth, registations, attendance, campaigns, organizations, admin
-
 from app.routers import (
-    health,
-    auth,
-    admin,
-    registations,
-    attendance,
-    campaigns,
-    organizations,
-    profile,
-    notification,
-    certificates,
-    waitlist,
-    hour_claims,
-    attendance_appeals,
-    admin_users,
-    hour_claims
+    health, auth, admin, user_moderation, registrations, attendance,
+    campaigns, organizations, profile, notification, certificates,
+    waitlist, hour_claims, attendance_appeals,
 )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -92,6 +79,10 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         expiry_task.cancel()
+        try:
+            await expiry_task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(
@@ -114,7 +105,8 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 app.include_router(health.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
-app.include_router(registations.router, prefix="/api")
+app.include_router(user_moderation.router, prefix="/api")
+app.include_router(registrations.router, prefix="/api")
 app.include_router(campaigns.router, prefix="/api")
 app.include_router(campaigns.admin_router, prefix="/api")
 app.include_router(attendance.router, prefix="/api")

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.users import UserModel
 from app.models.user_moderation import UserModerationHistoryModel
 from app.models.auth_sessions import AuthSessionModel, now_utc
-from app.schemas.admin_users import (
+from app.schemas.user_moderation import (
     UserItemResponse,
     UserListResponse,
     ModerationHistoryItem

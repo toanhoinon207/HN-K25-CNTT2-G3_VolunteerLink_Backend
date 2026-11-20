@@ -94,3 +94,150 @@ def issue_certificate(
 ) -> CertificateDetails:
     campaign = (
         db.query(CampaignModel)
+        .join(CampaignModel.organization)
+        .filter(
+            CampaignModel.id == payload.campaign_id,
+            OrganizationModel.owner_id == owner_id,
+        )
+        .with_for_update()
+        .first()
+    )
+    if campaign is None:
+        raise HTTPException(403, "Bạn không có quyền cấp chứng nhận cho chiến dịch này.")
+
+    approved = (
+        db.query(RegistrationModel.id)
+        .filter_by(campaign_id=campaign.id, user_id=payload.user_id, status="APPROVED")
+        .first()
+    )
+    if approved is None:
+        raise HTTPException(400, "Tình nguyện viên chưa được duyệt tham gia chiến dịch.")
+
+    if campaign.status != "COMPLETED":
+        raise HTTPException(400, "Chỉ cấp chứng nhận khi chiến dịch đã hoàn thành.")
+
+    verified_claims = (
+        db.query(HourClaimModel)
+        .join(RegistrationModel, RegistrationModel.id == HourClaimModel.registration_id)
+        .filter(
+            RegistrationModel.campaign_id == campaign.id,
+            RegistrationModel.user_id == payload.user_id,
+            HourClaimModel.user_id == payload.user_id,
+            HourClaimModel.status == "VERIFIED",
+        )
+        .all()
+    )
+    if len(verified_claims) != 1 or verified_claims[0].approved_hours is None:
+        raise HTTPException(400, "Cần đúng một yêu cầu giờ đã xác minh trước khi cấp chứng nhận.")
+
+    verified_hours = Decimal(str(verified_claims[0].approved_hours))
+    if verified_hours <= 0:
+        raise HTTPException(400, "Số giờ đã xác minh phải lớn hơn 0.")
+    if payload.total_hours != verified_hours:
+        raise HTTPException(422, "Số giờ chứng nhận phải khớp số giờ đã xác minh.")
+
+    # Không tự phát hành lại chứng chỉ đã bị thu hồi: cần quy trình riêng.
+    if (
+        db.query(CertificateModel.id)
+        .filter_by(campaign_id=campaign.id, user_id=payload.user_id)
+        .first()
+    ):
+        raise HTTPException(409, "Chiến dịch và tình nguyện viên này đã có chứng chỉ (kể cả đã thu hồi).")
+
+    certificate = CertificateModel(
+        certificate_code=f"VL-{uuid4().hex.upper()}",
+        user_id=payload.user_id,
+        campaign_id=campaign.id,
+        total_hours=verified_hours,
+    )
+    db.add(certificate)
+    create_notification(
+        db,
+        payload.user_id,
+        "Bạn đã được cấp chứng nhận",
+        f'Chiến dịch "{campaign.title}" đã cấp chứng nhận {verified_hours} giờ.',
+        f"user-dashboard.html?tab=certificates&certificate={certificate.certificate_code}",
+    )
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Không thể cấp chứng chỉ do xung đột dữ liệu.")
+    db.refresh(certificate)
+    return to_certificate_details(certificate)
+
+
+# Các hàm bổ sung từ develop, giữ tương thích schema/model hiện tại.
+def get_certificate_by_code(db: Session, certificate_code: str) -> dict:
+    code = (certificate_code or "").strip()
+    if not code:
+        raise ValueError("Vui lòng nhập mã chứng chỉ.")
+    certificate = (
+        db.query(CertificateModel)
+        .options(joinedload(CertificateModel.user), joinedload(CertificateModel.campaign))
+        .filter(CertificateModel.certificate_code == code)
+        .first()
+    )
+    if certificate is None:
+        raise LookupError("Không tìm thấy chứng chỉ.")
+    return {
+        "certificate_code": certificate.certificate_code,
+        "volunteer_name": certificate.user.full_name,
+        "campaign_name": certificate.campaign.title,
+        "total_hours": certificate.total_hours,
+        "issued_at": certificate.issued_at,
+        "status": certificate.status,
+        "revoked_reason": certificate.revoked_reason,
+    }
+
+
+def get_all_certificates(
+    db: Session, certificate_status: str | None = None, campaign_id: int | None = None
+) -> list[CertificateModel]:
+    query = db.query(CertificateModel)
+    if certificate_status is not None:
+        certificate_status = certificate_status.upper()
+        if certificate_status not in {"ACTIVE", "REVOKED"}:
+            raise ValueError("Trạng thái chứng chỉ không hợp lệ.")
+        query = query.filter(CertificateModel.status == certificate_status)
+    if campaign_id is not None:
+        query = query.filter(CertificateModel.campaign_id == campaign_id)
+    return query.order_by(CertificateModel.id.desc()).all()
+
+
+def revoke_certificate(
+    db: Session, certificate_id: int, admin_id: int, reason: str
+) -> CertificateModel:
+    """Router chịu trách nhiệm xác thực quyền ADMIN.
+
+    Không dùng revoked_at/revoked_by vì chúng chưa có trên model hiện tại.
+    """
+    reason = (reason or "").strip()
+    if not reason:
+        raise ValueError("Vui lòng nhập lý do thu hồi chứng chỉ.")
+    certificate = (
+        db.query(CertificateModel)
+        .filter(CertificateModel.id == certificate_id)
+        .with_for_update()
+        .first()
+    )
+    if certificate is None:
+        raise LookupError("Không tìm thấy chứng chỉ.")
+    if certificate.status == "REVOKED":
+        raise ValueError("Chứng chỉ đã bị thu hồi.")
+    certificate.status = "REVOKED"
+    certificate.revoked_reason = reason
+    create_notification(
+        db=db,
+        user_id=certificate.user_id,
+        title="Chứng chỉ đã bị thu hồi",
+        content=f"Chứng chỉ mã {certificate.certificate_code} đã bị thu hồi. Lý do: {reason}",
+        link="user-dashboard.html?tab=certificates",
+    )
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    db.refresh(certificate)
+    return certificate

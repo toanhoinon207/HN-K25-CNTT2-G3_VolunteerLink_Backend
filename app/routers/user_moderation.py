@@ -5,14 +5,14 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.dependencies.auth import require_role
 from app.models.users import UserModel
-from app.schemas.admin_users import (
+from app.schemas.user_moderation import (
     UserListResponse,
     UserItemResponse,
     LockUserRequest,
     UnlockUserRequest,
     ModerationHistoryItem
 )
-from app.services.admin_users import (
+from app.services.user_moderation import (
     list_users_service,
     lock_user_service,
     unlock_user_service,
@@ -26,7 +26,7 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=UserListResponse)
+@router.get("/search", response_model=UserListResponse)
 def get_users_list(
     keyword: Optional[str] = Query(None, description="Tìm theo họ tên, email hoặc SĐT"),
     role: Optional[str] = Query(None, description="Lọc theo vai trò: USER, ORGANIZER, ADMIN"),
