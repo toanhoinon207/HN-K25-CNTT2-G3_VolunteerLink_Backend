@@ -1,34 +1,18 @@
-from datetime import timedelta
-
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user, require_role
 from app.models.campaigns import CampaignModel, now_vietnam
-from app.models.organizations import OrganizationModel
 from app.models.registration import RegistrationModel
 from app.models.users import UserModel
 from app.models.waitlist_entry import WaitlistEntryModel
-from app.schemas.waitlist_entry import WaitlistEntryResponse
-from app.services.notifications import create_notification
-
+from app.schemas.waitlist_entry import WaitlistEntryResponse, WaitlistResponseRequest
+from app.services.waitlist import (
+    add_to_waitlist, approved_count, active_invite_count, list_campaign_waitlist, respond_to_invite,
+)
 
 router = APIRouter(prefix="/waitlist", tags=["Waitlist"])
-
-
-def require_open_campaign(campaign: CampaignModel, now):
-    if campaign.status != "OPEN" or campaign.registration_deadline <= now:
-        raise HTTPException(409, "Chiến dịch đã đóng đăng ký.")
-
-
-def has_registration(db: Session, user_id: int, campaign_id: int):
-    return db.query(RegistrationModel.id).filter(
-        RegistrationModel.user_id == user_id,
-        RegistrationModel.campaign_id == campaign_id,
-        RegistrationModel.status != "CANCELLED",
-    ).first() is not None
 
 
 @router.get("/mine", response_model=list[WaitlistEntryResponse])
@@ -36,7 +20,9 @@ def my_entries(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    return db.query(WaitlistEntryModel).filter_by(user_id=current_user.id).all()
+    return db.query(WaitlistEntryModel).filter_by(
+        user_id=current_user.id
+    ).order_by(WaitlistEntryModel.created_at.desc()).all()
 
 
 @router.post("/campaign/{campaign_id}", response_model=WaitlistEntryResponse)
@@ -47,86 +33,52 @@ def join_waitlist(
 ):
     campaign = db.query(CampaignModel).filter_by(id=campaign_id).with_for_update().first()
     if campaign is None:
-        raise HTTPException(404, "Không tìm thấy chiến dịch.")
-    now = now_vietnam()
-    require_open_campaign(campaign, now)
-    if has_registration(db, current_user.id, campaign_id):
-        raise HTTPException(409, "Bạn đã đăng ký chiến dịch này.")
-
-    entry = db.query(WaitlistEntryModel).filter_by(
+        raise HTTPException(404, "Không tìm thấy chiến dịch")
+    if campaign.status != "OPEN" or campaign.registration_deadline <= now_vietnam():
+        raise HTTPException(409, "Chiến dịch đã đóng đăng ký")
+    if approved_count(db, campaign_id) + active_invite_count(db, campaign_id) < campaign.max_participants:
+        raise HTTPException(409, "Chiến dịch vẫn còn chỗ; hãy đăng ký theo luồng thông thường")
+    registration = db.query(RegistrationModel).filter_by(
         user_id=current_user.id, campaign_id=campaign_id
     ).first()
-    if entry and entry.status in ("WAITING", "INVITED"):
-        return entry
-    position = db.query(func.max(WaitlistEntryModel.position)).filter_by(campaign_id=campaign_id).scalar()
-    if entry is None:
-        entry = WaitlistEntryModel(user_id=current_user.id, campaign_id=campaign_id)
-        db.add(entry)
-    entry.position = (position or 0) + 1
-    entry.status = "WAITING"
-    entry.invited_at = None
-    entry.response_deadline = None
+    if registration and registration.status not in ("CANCELLED", "WAITLISTED"):
+        raise HTTPException(409, "Bạn đã đăng ký chiến dịch này")
+    entry = add_to_waitlist(db, current_user.id, campaign_id)
+    if registration is None or registration.status == "CANCELLED":
+        if registration is None:
+            registration = RegistrationModel(
+                user_id=current_user.id, campaign_id=campaign_id, status="WAITLISTED"
+            )
+            db.add(registration)
+        else:
+            registration.status = "WAITLISTED"
     db.commit()
     db.refresh(entry)
     return entry
 
 
-@router.get("/managed")
-def managed_entries(
+@router.get("/campaign/{campaign_id}", response_model=list[WaitlistEntryResponse])
+def campaign_waitlist(
+    campaign_id: int,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(require_role("ORGANIZER")),
 ):
-    rows = db.query(WaitlistEntryModel).join(WaitlistEntryModel.campaign).join(
-        CampaignModel.organization
-    ).options(joinedload(WaitlistEntryModel.campaign), joinedload(WaitlistEntryModel.user)).filter(
-        OrganizationModel.owner_id == current_user.id
-    ).order_by(WaitlistEntryModel.campaign_id, WaitlistEntryModel.position).all()
-    now = now_vietnam()
-    return [
-        WaitlistEntryResponse.model_validate(row).model_dump() | {
-            "campaign_title": row.campaign.title,
-            "user_name": row.user.full_name,
-            "can_invite": row.campaign.status == "OPEN" and row.campaign.registration_deadline > now and (
-                row.status == "WAITING" or (
-                    row.status == "INVITED" and row.response_deadline and row.response_deadline <= now
-                )
-            ),
-        }
-        for row in rows
-    ]
+    campaign = db.query(CampaignModel).join(CampaignModel.organization).filter(
+        CampaignModel.id == campaign_id
+    ).first()
+    if campaign is None or campaign.organization.owner_id != current_user.id:
+        raise HTTPException(403, "Bạn không có quyền xem danh sách chờ này")
+    return list_campaign_waitlist(db, campaign_id)
 
 
-@router.patch("/{entry_id}/invite", response_model=WaitlistEntryResponse)
-def invite(
+@router.patch("/{entry_id}/respond", response_model=WaitlistEntryResponse)
+def respond(
     entry_id: int,
+    request: WaitlistResponseRequest,
     db: Session = Depends(get_db),
-    current_user: UserModel = Depends(require_role("ORGANIZER")),
+    current_user: UserModel = Depends(require_role("USER")),
 ):
-    campaign = db.query(CampaignModel).join(CampaignModel.organization).join(
-        WaitlistEntryModel, WaitlistEntryModel.campaign_id == CampaignModel.id
-    ).filter(
-        OrganizationModel.owner_id == current_user.id, WaitlistEntryModel.id == entry_id,
-    ).with_for_update().first()
-    if campaign is None:
-        raise HTTPException(404, "Không tìm thấy mục trong danh sách chờ.")
-    now = now_vietnam()
-    require_open_campaign(campaign, now)
-    entry = db.get(WaitlistEntryModel, entry_id)
-    if entry.status == "INVITED" and entry.response_deadline and entry.response_deadline > now:
-        return entry
-    if entry.status not in ("WAITING", "INVITED") or has_registration(db, entry.user_id, campaign.id):
-        raise HTTPException(409, "Tình nguyện viên không còn trong hàng chờ.")
-
-    entry.status = "INVITED"
-    entry.invited_at = now
-    entry.response_deadline = min(now + timedelta(hours=24), campaign.registration_deadline)
-    create_notification(
-        db, entry.user_id,
-        "Lời mời đăng ký chiến dịch",
-        f'Bạn được mời gửi đơn cho chiến dịch "{campaign.title}" trước '
-        f'{entry.response_deadline:%H:%M %d/%m/%Y} (giờ Việt Nam).',
-        f"user-dashboard.html?tab=campaigns&campaign_id={campaign.id}",
-    )
-    db.commit()
-    db.refresh(entry)
-    return entry
+    response = request.response.upper()
+    if response not in ("ACCEPTED", "DECLINED"):
+        raise HTTPException(422, "response phải là ACCEPTED hoặc DECLINED")
+    return respond_to_invite(db, entry_id, current_user.id, response)

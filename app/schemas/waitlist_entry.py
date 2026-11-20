@@ -13,4 +13,9 @@ class WaitlistEntryResponse(BaseModel):
     status: str
     invited_at: Optional[datetime]
     response_deadline: Optional[datetime]
-    model_config = ConfigDict(from_attributes=True) 
+    responded_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+class WaitlistResponseRequest(BaseModel):
+    response: str

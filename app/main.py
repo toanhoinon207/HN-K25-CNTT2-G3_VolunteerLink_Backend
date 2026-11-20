@@ -6,6 +6,7 @@ Tài liệu API: http://127.0.0.1:8000/docs
 """
 
 from contextlib import asynccontextmanager
+import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +14,8 @@ from sqlalchemy.exc import OperationalError
 
 from app import models
 from app.core.config import settings
-from app.db.session import Base, engine
+from app.db.session import Base, engine, SessionLocal
+from app.services.waitlist import process_expired_invites
 
 # Import hàm seed dữ liệu
 from app.db.seed import run_seed
@@ -30,7 +32,7 @@ from app.routers import (
     certificates,
     waitlist,
     admin_users,
-)
+    hour_claims
 
 
 @asynccontextmanager
@@ -58,7 +60,23 @@ async def lifespan(app: FastAPI):
         print(f"[DB] Chi tiết: {error.orig}")
         raise
 
-    yield
+    # Kiểm tra định kỳ lời mời đã quá 24 giờ để mời người kế tiếp.
+    async def expire_waitlist_invites():
+        while True:
+            await asyncio.sleep(60)
+            def process_with_session():
+                db = SessionLocal()
+                try:
+                    process_expired_invites(db)
+                finally:
+                    db.close()
+            await asyncio.to_thread(process_with_session)
+
+    expiry_task = asyncio.create_task(expire_waitlist_invites())
+    try:
+        yield
+    finally:
+        expiry_task.cancel()
 
 
 app = FastAPI(
@@ -76,6 +94,10 @@ app.add_middleware(
 
 app.include_router(health.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
+app.include_router(registations.router,prefix="/api")
+app.include_router(campaigns.router, prefix="/api")
+app.include_router(campaigns.admin_router, prefix="/api")
+app.include_router(attendance.router,prefix="/api")
 app.include_router(registations.router, prefix="/api")
 app.include_router(campaigns.router, prefix="/api")
 app.include_router(attendance.router, prefix="/api")
@@ -86,6 +108,7 @@ app.include_router(notification.router, prefix="/api")
 app.include_router(certificates.router, prefix="/api")
 app.include_router(waitlist.router, prefix="/api")
 app.include_router(admin_users.router, prefix="/api")
+app.include_router(hour_claims.router, prefix="/api") 
 
 @app.get("/")
 def root():
