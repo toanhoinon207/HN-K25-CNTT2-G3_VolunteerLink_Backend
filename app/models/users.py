@@ -25,7 +25,7 @@ class UserModel(Base):
     registrations = relationship("RegistrationModel", back_populates = "user")
     notifications = relationship("NotificationModel", back_populates = "user")
     hour_claims = relationship("HourClaimModel",back_populates="user",foreign_keys="HourClaimModel.user_id")
-    certificates = relationship("CertificateModel", back_populates = "user")
+    certificates = relationship("CertificateModel",back_populates="user",foreign_keys="CertificateModel.user_id")
     attendance = relationship("AttendanceModel", back_populates= "user", foreign_keys="AttendanceModel.recorded_by")
     organization = relationship("OrganizationModel", back_populates = "owner", uselist = False)
     waitlist_entries = relationship("WaitlistEntryModel", back_populates = "user")

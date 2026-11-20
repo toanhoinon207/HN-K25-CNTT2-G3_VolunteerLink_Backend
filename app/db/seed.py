@@ -20,11 +20,6 @@ from app.models.campaigns import CampaignModel
 from app.models.registration import RegistrationModel
 from app.models.attendances import AttendanceModel
 
-
-# ============================================================
-# 1. USERS
-# ============================================================
-
 _USERS = [
     # USER
     {
