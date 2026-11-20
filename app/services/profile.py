@@ -1,5 +1,8 @@
 
-from fastapi import HTTPException
+from pathlib import Path
+import uuid
+
+from fastapi import HTTPException, UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -77,6 +80,54 @@ def update_user_profile(
     if "avatar_url" in values:
         user.avatar_url = values["avatar_url"]
 
+    db.commit()
+    db.refresh(user)
+
+    return get_profile(db, user)
+
+
+ALLOWED_AVATAR_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+MAX_AVATAR_BYTES = 2 * 1024 * 1024
+AVATAR_UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads" / "avatars"
+
+
+def upload_user_avatar(db: Session, user: UserModel, file: UploadFile):
+    """Lưu file ảnh đại diện mới và cập nhật avatar_url cho người dùng."""
+    ext = ALLOWED_AVATAR_TYPES.get((file.content_type or "").lower())
+    if not ext:
+        raise HTTPException(
+            status_code=400,
+            detail="Chỉ hỗ trợ định dạng ảnh JPG, PNG hoặc WEBP."
+        )
+
+    content = file.file.read(MAX_AVATAR_BYTES + 1)
+    if not content:
+        raise HTTPException(
+            status_code=400,
+            detail="File ảnh rỗng."
+        )
+    if len(content) > MAX_AVATAR_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Kích thước ảnh tối đa là 2MB."
+        )
+
+    AVATAR_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"user_{user.id}_{uuid.uuid4().hex}{ext}"
+    target_path = AVATAR_UPLOAD_DIR / filename
+    target_path.write_bytes(content)
+
+    old_url = user.avatar_url or ""
+    if old_url.startswith("/uploads/avatars/"):
+        old_file = AVATAR_UPLOAD_DIR / Path(old_url).name
+        if old_file.is_file():
+            old_file.unlink(missing_ok=True)
+
+    user.avatar_url = f"/uploads/avatars/{filename}"
     db.commit()
     db.refresh(user)
 

@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.models.registration import RegistrationModel
 from app.models.campaigns import CampaignModel
 from app.models.users import UserModel
@@ -314,3 +314,26 @@ def get_campaign_registrations(
         )
 
     return query.all()
+
+
+def get_my_registrations(db: Session, user_id: int):
+    regs = (
+        db.query(RegistrationModel)
+        .options(joinedload(RegistrationModel.campaign))
+        .filter(RegistrationModel.user_id == user_id)
+        .order_by(RegistrationModel.id.desc())
+        .all()
+    )
+
+    return [
+        {
+            "id": r.id,
+            "campaign_id": r.campaign_id,
+            "campaign_title": r.campaign.title if r.campaign else f"Chiến dịch #{r.campaign_id}",
+            "status": r.status,
+            "message": r.message,
+            "rejection_reason": r.rejection_reason,
+            "created_at": r.created_at,
+        }
+        for r in regs
+    ]

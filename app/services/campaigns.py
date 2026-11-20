@@ -99,6 +99,42 @@ def get_owned_draft(
     return campaign
 
 
+def get_organizer_campaigns(
+    db: Session,
+    current_user: UserModel,
+):
+    organization = get_approved_organization(db, current_user.id)
+
+    campaigns = (
+        db.query(CampaignModel)
+        .filter(CampaignModel.organization_id == organization.id)
+        .order_by(CampaignModel.created_at.desc(), CampaignModel.id.desc())
+        .all()
+    )
+    if not campaigns:
+        return []
+
+    campaign_ids = [c.id for c in campaigns]
+    counts_rows = (
+        db.query(
+            RegistrationModel.campaign_id,
+            func.count(RegistrationModel.id),
+        )
+        .filter(
+            RegistrationModel.campaign_id.in_(campaign_ids),
+            RegistrationModel.status == "APPROVED",
+        )
+        .group_by(RegistrationModel.campaign_id)
+        .all()
+    )
+    counts_map = {camp_id: count for camp_id, count in counts_rows}
+
+    for camp in campaigns:
+        setattr(camp, "registered_count", counts_map.get(camp.id, 0))
+
+    return campaigns
+
+
 def create_campaign(
     db: Session,
     data: CampaignCreate,

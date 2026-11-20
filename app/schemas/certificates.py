@@ -37,4 +37,14 @@ class CertificateResponse(CertificateBase):
     issued_at: datetime
 
 
-    model_config = ConfigDict(from_attributes=True) 
+    model_config = ConfigDict(from_attributes=True)
+
+
+class IssueCertificate(BaseModel):
+    campaign_id: int = Field(gt=0)
+    user_id: int = Field(gt=0)
+    total_hours: Decimal = Field(gt=0, max_digits=6, decimal_places=2)
+
+
+class CertificateDetails(CertificateResponse):
+    campaign_title: str
