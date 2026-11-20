@@ -10,6 +10,7 @@ from app.models.registration import RegistrationModel
 from app.models.attendances import AttendanceModel
 from app.models.campaigns import CampaignModel
 from app.models.organizations import OrganizationModel
+from app.services.certificates import issue_certificate 
 
 from app.schemas.hourclaims import (
     HourClaimCreate,
@@ -436,6 +437,16 @@ def review_hour_claim(
         db.commit()
         db.refresh(claim)
 
+       # Tự động cấp chứng nhận sau khi xác minh thành công
+        if claim.status == "VERIFIED":
+
+            issue_certificate(
+                db=db,
+                user_id=claim.user_id,
+                campaign_id=registration.campaign_id,
+                verified_hours=claim.approved_hours
+    )
+
         return claim
 
     except Exception:
@@ -531,6 +542,14 @@ def review_hour_claim_appeal(
                 status_code=404,
                 detail="Không tìm thấy yêu cầu"
             )
+        registration = db.query(RegistrationModel).filter(
+            RegistrationModel.id == claim.registration_id).first()
+
+        if registration is None:
+            raise HTTPException(
+            status_code=404,
+            detail="Không tìm thấy thông tin đăng ký"
+    )
 
         if claim.appeal_status != "PENDING":
             raise HTTPException(
@@ -590,7 +609,14 @@ def review_hour_claim_appeal(
 
         db.commit()
         db.refresh(claim)
+        if claim.appeal_status == "ACCEPTED" and claim.status == "VERIFIED":
 
+            issue_certificate(
+                db=db,
+                user_id=claim.user_id,
+                campaign_id=registration.campaign_id,
+                verified_hours=claim.approved_hours
+            )
         return claim
 
     except Exception:

@@ -104,6 +104,7 @@ app.include_router(organizations.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 
 
+
 @app.get("/")
 def root():
     return {"message": f"{settings.APP_NAME} đang chạy. Xem tài liệu API tại /docs"}
