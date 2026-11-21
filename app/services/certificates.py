@@ -15,16 +15,28 @@ from app.services.notifications import create_notification
 
 
 def to_certificate_details(certificate: CertificateModel) -> CertificateDetails:
+    campaign = certificate.campaign
+    organization_name = (
+        campaign.organization.name
+        if campaign is not None and campaign.organization is not None
+        else None
+    )
+    volunteer_name = certificate.user.full_name if certificate.user is not None else None
     return CertificateDetails(
         **CertificateResponse.model_validate(certificate).model_dump(),
-        campaign_title=certificate.campaign.title,
+        campaign_title=campaign.title if campaign is not None else "",
+        organization_name=organization_name,
+        volunteer_name=volunteer_name,
     )
 
 
 def get_my_certificates(db: Session, user_id: int) -> list[CertificateDetails]:
     items = (
         db.query(CertificateModel)
-        .options(joinedload(CertificateModel.campaign))
+        .options(
+            joinedload(CertificateModel.campaign).joinedload(CampaignModel.organization),
+            joinedload(CertificateModel.user),
+        )
         .filter(CertificateModel.user_id == user_id)
         .order_by(CertificateModel.id.desc())
         .all()
@@ -35,7 +47,10 @@ def get_my_certificates(db: Session, user_id: int) -> list[CertificateDetails]:
 def get_issued_certificates(db: Session, owner_id: int) -> list[CertificateDetails]:
     items = (
         db.query(CertificateModel)
-        .options(joinedload(CertificateModel.campaign))
+        .options(
+            joinedload(CertificateModel.campaign).joinedload(CampaignModel.organization),
+            joinedload(CertificateModel.user),
+        )
         .join(CertificateModel.campaign)
         .join(CampaignModel.organization)
         .filter(OrganizationModel.owner_id == owner_id)
@@ -164,7 +179,16 @@ def issue_certificate(
         db.rollback()
         raise HTTPException(409, "Không thể cấp chứng chỉ do xung đột dữ liệu.")
     db.refresh(certificate)
-    return to_certificate_details(certificate)
+    loaded = (
+        db.query(CertificateModel)
+        .options(
+            joinedload(CertificateModel.campaign).joinedload(CampaignModel.organization),
+            joinedload(CertificateModel.user),
+        )
+        .filter(CertificateModel.id == certificate.id)
+        .first()
+    )
+    return to_certificate_details(loaded or certificate)
 
 
 # Các hàm bổ sung từ develop, giữ tương thích schema/model hiện tại.
