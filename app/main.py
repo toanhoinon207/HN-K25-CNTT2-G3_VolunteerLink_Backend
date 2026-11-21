@@ -33,25 +33,18 @@ from app.routers import (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        # 1. Tạo các bảng còn thiếu
         Base.metadata.create_all(bind=engine)
-
         print(
             f"[DB] Đã kết nối MySQL "
             f"{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
         )
-
-        # 2. Tự động seed dữ liệu mẫu
         print("[SEED] Bắt đầu thêm dữ liệu mẫu...")
         run_seed()
-
     except OperationalError as error:
         print("[DB] KHÔNG kết nối được MySQL!")
         print("[DB] Kiểm tra MySQL và file .env")
-
         if "Unknown database" in str(error.orig):
             print("[DB] Chưa có database -> chạy sql/init.sql")
-
         print(f"[DB] Chi tiết: {error.orig}")
         raise
 

@@ -9,7 +9,8 @@ from app.models.users import UserModel
 from app.models.waitlist_entry import WaitlistEntryModel
 from app.schemas.waitlist_entry import WaitlistEntryResponse, WaitlistResponseRequest
 from app.services.waitlist import (
-    add_to_waitlist, approved_count, active_invite_count, list_campaign_waitlist, respond_to_invite,
+    add_to_waitlist, approved_count, active_invite_count, list_campaign_waitlist,
+    process_expired_invites, respond_to_invite,
 )
 
 router = APIRouter(prefix="/waitlist", tags=["Waitlist"])
@@ -54,6 +55,7 @@ def join_waitlist(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(require_role("USER")),
 ):
+    process_expired_invites(db)
     campaign = db.query(CampaignModel).filter_by(id=campaign_id).with_for_update().first()
     if campaign is None:
         raise HTTPException(404, "Không tìm thấy chiến dịch")
@@ -86,6 +88,7 @@ def campaign_waitlist(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(require_role("ORGANIZER")),
 ):
+    process_expired_invites(db)
     campaign = db.query(CampaignModel).join(CampaignModel.organization).filter(
         CampaignModel.id == campaign_id
     ).first()
@@ -106,6 +109,7 @@ def respond(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(require_role("USER")),
 ):
+    process_expired_invites(db)
     response = request.response.upper()
     if response not in ("ACCEPTED", "DECLINED"):
         raise HTTPException(422, "response phải là ACCEPTED hoặc DECLINED")
