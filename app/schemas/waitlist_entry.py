@@ -10,6 +10,9 @@ class WaitlistEntryResponse(BaseModel):
     user_id: int
     campaign_id: int
     position: int
+    queue_position: Optional[int] = None
+    campaign_title: Optional[str] = None
+    user_name: Optional[str] = None
     status: str
     invited_at: Optional[datetime]
     response_deadline: Optional[datetime]
