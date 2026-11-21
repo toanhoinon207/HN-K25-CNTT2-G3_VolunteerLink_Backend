@@ -1,63 +1,71 @@
-from decimal import Decimal
-from uuid import uuid4
+"""Certificate endpoints: merge of feature and develop branches.
 
-from fastapi import APIRouter, Depends, HTTPException
+Certificate issuance is delegated to the validated service; no direct issuance
+logic is reintroduced from develop.
+"""
+from typing import Literal, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user, require_role
-from app.models.campaigns import CampaignModel
 from app.models.certificate import CertificateModel
-from app.models.organizations import OrganizationModel
-from app.models.registration import RegistrationModel
 from app.models.users import UserModel
-from app.schemas.certificates import CertificateResponse
+from app.schemas.certificates import (
+    CertificateDetails,
+    CertificateResponse,
+    IssueCertificate,
+)
+from app.services.certificates import (
+    get_eligible_recipients,
+    get_issued_certificates,
+    get_my_certificates,
+    issue_certificate as issue_certificate_service,
+    revoke_certificate as revoke_certificate_service,
+)
 from app.services.notifications import create_notification
-
 
 router = APIRouter(prefix="/certificates", tags=["Certificates"])
 
 
-class IssueCertificate(BaseModel):
-    campaign_id: int = Field(gt=0)
-    user_id: int = Field(gt=0)
-    total_hours: Decimal = Field(gt=0, max_digits=6, decimal_places=2)
-
-
-class CertificateDetails(CertificateResponse):
+class CertificatePublicVerification(BaseModel):
+    certificate_code: str
     campaign_title: str
+    total_hours: float
+    status: Literal["ACTIVE", "REVOKED"]
 
 
-def details(certificate: CertificateModel) -> CertificateDetails:
-    return CertificateDetails(
-        **CertificateResponse.model_validate(certificate).model_dump(),
-        campaign_title=certificate.campaign.title,
-    )
+class CertificateRevokeBody(BaseModel):
+    revoked_reason: str = Field(min_length=1, max_length=1000)
 
 
+# USER: original endpoint used by the current frontend.
 @router.get("/me", response_model=list[CertificateDetails])
 def my_certificates(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    items = db.query(CertificateModel).options(joinedload(CertificateModel.campaign)).filter(
-        CertificateModel.user_id == current_user.id
-    ).order_by(CertificateModel.id.desc()).all()
-    return [details(item) for item in items]
+    return get_my_certificates(db, current_user.id)
 
 
+# Legacy alias from develop; same data, no duplicated query logic.
+@router.get("/my-certificates", response_model=list[CertificateDetails])
+def list_my_certificates(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("USER")),
+):
+    return get_my_certificates(db, current_user.id)
+
+
+# ORGANIZER
 @router.get("/issued", response_model=list[CertificateDetails])
 def issued_certificates(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(require_role("ORGANIZER")),
 ):
-    items = db.query(CertificateModel).options(joinedload(CertificateModel.campaign)).join(
-        CertificateModel.campaign
-    ).join(CampaignModel.organization).filter(
-        OrganizationModel.owner_id == current_user.id
-    ).order_by(CertificateModel.id.desc()).all()
-    return [details(item) for item in items]
+    return get_issued_certificates(db, current_user.id)
 
 
 @router.get("/eligible")
@@ -65,22 +73,7 @@ def eligible_recipients(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(require_role("ORGANIZER")),
 ):
-    rows = db.query(RegistrationModel).join(RegistrationModel.campaign).join(
-        CampaignModel.organization
-    ).options(joinedload(RegistrationModel.campaign), joinedload(RegistrationModel.user)).filter(
-        OrganizationModel.owner_id == current_user.id,
-        RegistrationModel.status == "APPROVED",
-        ~db.query(CertificateModel.id).filter(
-            CertificateModel.user_id == RegistrationModel.user_id,
-            CertificateModel.campaign_id == RegistrationModel.campaign_id,
-            CertificateModel.status == "ACTIVE",
-        ).exists(),
-    ).order_by(CampaignModel.title, RegistrationModel.id).all()
-    return [
-        {"campaign_id": row.campaign_id, "campaign_title": row.campaign.title,
-         "user_id": row.user_id, "user_name": row.user.full_name}
-        for row in rows
-    ]
+    return get_eligible_recipients(db, current_user.id)
 
 
 @router.post("", response_model=CertificateDetails, status_code=201)
@@ -89,35 +82,70 @@ def issue_certificate(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(require_role("ORGANIZER")),
 ):
-    campaign = db.query(CampaignModel).join(CampaignModel.organization).filter(
-        CampaignModel.id == payload.campaign_id,
-        OrganizationModel.owner_id == current_user.id,
-    ).with_for_update().first()
-    if campaign is None:
-        raise HTTPException(403, "Bạn không có quyền cấp chứng nhận cho chiến dịch này.")
-    approved = db.query(RegistrationModel.id).filter_by(
-        campaign_id=campaign.id, user_id=payload.user_id, status="APPROVED"
-    ).first()
-    if approved is None:
-        raise HTTPException(400, "Tình nguyện viên chưa được duyệt tham gia chiến dịch.")
-    if db.query(CertificateModel.id).filter_by(
-        campaign_id=campaign.id, user_id=payload.user_id, status="ACTIVE"
-    ).first():
-        raise HTTPException(409, "Tình nguyện viên đã có chứng nhận cho chiến dịch này.")
+    # This service enforces COMPLETED + VERIFIED hours + ownership.
+    return issue_certificate_service(db, payload, current_user.id)
 
-    certificate = CertificateModel(
-        certificate_code=f"VL-{uuid4().hex.upper()}",
-        user_id=payload.user_id,
-        campaign_id=campaign.id,
-        total_hours=payload.total_hours,
+
+# PUBLIC: verify a certificate by its code, without exposing personal details.
+@router.get("/verify/{certificate_code}", response_model=CertificatePublicVerification)
+def verify_certificate(
+    certificate_code: str,
+    db: Session = Depends(get_db),
+):
+    certificate = (
+        db.query(CertificateModel)
+        .options(joinedload(CertificateModel.campaign))
+        .filter(CertificateModel.certificate_code == certificate_code)
+        .first()
     )
-    db.add(certificate)
-    create_notification(
-        db, payload.user_id,
-        "Bạn đã được cấp chứng nhận",
-        f'Chiến dịch "{campaign.title}" đã cấp chứng nhận {payload.total_hours} giờ.',
-        f"user-dashboard.html?tab=certificates&certificate={certificate.certificate_code}",
+    if certificate is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy chứng chỉ.")
+    return CertificatePublicVerification(
+        certificate_code=certificate.certificate_code,
+        campaign_title=certificate.campaign.title,
+        total_hours=float(certificate.total_hours),
+        status=certificate.status,
     )
-    db.commit()
-    db.refresh(certificate)
-    return details(certificate)
+
+
+# ADMIN: list all certificates (develop endpoint).
+@router.get("", response_model=list[CertificateResponse])
+def list_all_certificates(
+    certificate_status: Optional[Literal["ACTIVE", "REVOKED"]] = Query(default=None, alias="status"),
+    campaign_id: Optional[int] = Query(default=None, gt=0),
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("ADMIN")),
+):
+    query = db.query(CertificateModel)
+    if certificate_status is not None:
+        query = query.filter(CertificateModel.status == certificate_status)
+    if campaign_id is not None:
+        query = query.filter(CertificateModel.campaign_id == campaign_id)
+    return query.order_by(CertificateModel.id.desc()).all()
+
+
+# ADMIN: legacy revoke endpoint from develop.
+# Note: /api/admin/certificates/{id}/revoke also exists; consider
+# consolidating into one service after the merge.
+@router.patch("/{certificate_id}/revoke", response_model=CertificateResponse)
+def revoke_certificate_api(
+    certificate_id: int,
+    data: CertificateRevokeBody,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("ADMIN")),
+):
+    reason = data.revoked_reason.strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Vui lòng nhập lý do thu hồi chứng chỉ.")
+
+    try:
+        return revoke_certificate_service(
+            db=db,
+            certificate_id=certificate_id,
+            admin_id=current_user.id,
+            reason=reason,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

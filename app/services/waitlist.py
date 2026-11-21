@@ -54,7 +54,7 @@ def _invite_next(db: Session, campaign: CampaignModel):
         user_id=entry.user_id,
         title="Bạn được mời từ danh sách chờ",
         content=f'Chiến dịch "{campaign.title}" đã có chỗ. Vui lòng phản hồi lời mời trong vòng 24 giờ.',
-        link=f"/campaigns/{campaign.id}",
+        link=f"campaign_detail.html?id={campaign.id}",
     )
     return entry
 
@@ -117,12 +117,23 @@ def respond_to_invite(db: Session, waitlist_id: int, user_id: int, response: str
         entry.status = "EXPIRED"
         entry.responded_at = now
         entry.updated_at = now
+        registration = db.query(RegistrationModel).filter_by(
+            user_id=user_id, campaign_id=campaign.id
+        ).first()
+        if registration and registration.status == "WAITLISTED":
+            registration.status = "CANCELLED"
         _invite_next(db, campaign)
         db.commit()
-        raise HTTPException(400, "Lời mời đã hết hạn; người tiếp theo đã được mời nếu còn chỗ")
+        db.refresh(entry)
+        return entry
 
     if response == "DECLINED":
         entry.status = "DECLINED"
+        registration = db.query(RegistrationModel).filter_by(
+            user_id=user_id, campaign_id=campaign.id
+        ).first()
+        if registration and registration.status == "WAITLISTED":
+            registration.status = "CANCELLED"
         entry.responded_at = now
         entry.updated_at = now
         _invite_next(db, campaign)
@@ -146,7 +157,7 @@ def respond_to_invite(db: Session, waitlist_id: int, user_id: int, response: str
         create_notification(
             db, user_id, "Đăng ký chiến dịch được duyệt",
             f'Đăng ký tham gia chiến dịch "{campaign.title}" đã được duyệt.',
-            f"/campaigns/{campaign.id}",
+            f"campaign_detail.html?id={campaign.id}",
         )
 
     db.commit()
@@ -175,6 +186,11 @@ def process_expired_invites(db: Session):
             db.rollback()
             continue
         entry.status = "EXPIRED"
+        registration = db.query(RegistrationModel).filter_by(
+            user_id=entry.user_id, campaign_id=campaign.id
+        ).first()
+        if registration and registration.status == "WAITLISTED":
+            registration.status = "CANCELLED"
         entry.responded_at = now
         entry.updated_at = now
         _invite_next(db, campaign)

@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -20,6 +20,7 @@ from app.services.profile import (
     get_profile,
     update_user_profile,
     update_volunteer_profile,
+    upload_user_avatar,
     change_password,
     get_public_profile
 )
@@ -48,6 +49,16 @@ def edit_profile(
     db: Session = Depends(get_db)
 ):
     return update_user_profile(db, current_user, data)
+
+
+# 2.5. Tải lên ảnh đại diện
+@router.post("/avatar", response_model=ProfileResponse)
+def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return upload_user_avatar(db, current_user, file)
 
 
 # 3. Cập nhật hồ sơ tình nguyện viên

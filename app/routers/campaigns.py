@@ -7,12 +7,16 @@ from app.dependencies.auth import require_role
 from app.models.users import UserModel
 
 from app.schemas.campaigns import (
+    CampaignCancelRequest,
     CampaignCreate,
-    CampaignUpdate,
-    CampaignResponse,
-    CampaignListResponse,
     CampaignDetailResponse,
-    CampaignListItemResponse
+    CampaignListItemResponse,
+    CampaignListResponse,
+    CampaignPendingItemResponse,
+    CampaignResponse,
+    CampaignReviewRequest,
+    CampaignUpdate,
+    OrganizerCampaignResponse,
 )
 
 from app.services import campaigns as campaign_service
@@ -74,6 +78,23 @@ def submit_campaign(
     )
 
 
+@router.patch(
+    "/{campaign_id}/cancel",
+    response_model=CampaignResponse
+)
+def cancel_campaign(
+    campaign_id: int,
+    data: CampaignCancelRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(
+        require_role("ORGANIZER")
+    )
+):
+    return campaign_service.cancel_campaign(
+        db, campaign_id, data, current_user
+    )
+
+
 @router.get(
     "",
     response_model=CampaignListResponse
@@ -81,6 +102,7 @@ def submit_campaign(
 def list_public_campaigns(
     keyword: str | None = None,
     category: str | None = None,
+    status: str | None = None,
     sort: str | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=6, ge=1, le=100),
@@ -90,10 +112,24 @@ def list_public_campaigns(
         db=db,
         keyword=keyword,
         category=category,
+        status=status,
         sort=sort,
         page=page,
         page_size=page_size
     )
+
+@router.get(
+    "/mine",
+    response_model=list[OrganizerCampaignResponse]
+)
+def list_my_campaigns(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(
+        require_role("ORGANIZER")
+    )
+):
+    return campaign_service.get_organizer_campaigns(db, current_user)
+
 
 @router.get(
     "/featured",
@@ -119,5 +155,35 @@ def public_campaign_detail(
     return campaign_service.get_public_campaign_detail(
         db, campaign_id
     )
+
+
+admin_router = APIRouter(
+    prefix="/admin/campaigns",
+    tags=["Admin Campaigns"]
+)
+
+
+@admin_router.get(
+    "/pending",
+    response_model=list[CampaignPendingItemResponse]
+)
+def list_pending_campaigns(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("ADMIN"))
+):
+    return campaign_service.get_pending_campaigns(db)
+
+
+@admin_router.patch(
+    "/{campaign_id}/review",
+    response_model=CampaignResponse
+)
+def review_campaign(
+    campaign_id: int,
+    data: CampaignReviewRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("ADMIN"))
+):
+    return campaign_service.review_campaign(db, campaign_id, data)
 
 

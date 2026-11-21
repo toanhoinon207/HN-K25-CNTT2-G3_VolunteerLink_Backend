@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user, require_role
@@ -16,15 +16,37 @@ from app.services.waitlist import (
 router = APIRouter(prefix="/waitlist", tags=["Waitlist"])
 
 
+def entry_details(db: Session, entry: WaitlistEntryModel) -> dict:
+    # Queue position reflects only active waiting entries, not historical sequence numbers.
+    position = None
+    if entry.status == "WAITING":
+        position = db.query(WaitlistEntryModel).filter(
+            WaitlistEntryModel.campaign_id == entry.campaign_id,
+            WaitlistEntryModel.status == "WAITING",
+            (WaitlistEntryModel.position < entry.position) |
+            ((WaitlistEntryModel.position == entry.position) & (WaitlistEntryModel.id <= entry.id)),
+        ).count()
+    return {
+        "id": entry.id, "user_id": entry.user_id, "campaign_id": entry.campaign_id,
+        "position": entry.position, "queue_position": position,
+        "status": entry.status, "invited_at": entry.invited_at,
+        "response_deadline": entry.response_deadline, "responded_at": entry.responded_at,
+        "created_at": entry.created_at,
+        "campaign_title": entry.campaign.title if entry.campaign else None,
+        "user_name": entry.user.full_name if entry.user else None,
+    }
+
+
+
 @router.get("/mine", response_model=list[WaitlistEntryResponse])
 def my_entries(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    process_expired_invites(db)
-    return db.query(WaitlistEntryModel).filter_by(
-        user_id=current_user.id
-    ).order_by(WaitlistEntryModel.created_at.desc()).all()
+    entries = db.query(WaitlistEntryModel).options(
+        joinedload(WaitlistEntryModel.campaign)
+    ).filter_by(user_id=current_user.id).order_by(WaitlistEntryModel.created_at.desc()).all()
+    return [entry_details(db, entry) for entry in entries]
 
 
 @router.post("/campaign/{campaign_id}", response_model=WaitlistEntryResponse)
@@ -57,7 +79,7 @@ def join_waitlist(
             registration.status = "WAITLISTED"
     db.commit()
     db.refresh(entry)
-    return entry
+    return entry_details(db, entry)
 
 
 @router.get("/campaign/{campaign_id}", response_model=list[WaitlistEntryResponse])
@@ -72,7 +94,12 @@ def campaign_waitlist(
     ).first()
     if campaign is None or campaign.organization.owner_id != current_user.id:
         raise HTTPException(403, "Bạn không có quyền xem danh sách chờ này")
-    return list_campaign_waitlist(db, campaign_id)
+    entries = db.query(WaitlistEntryModel).options(
+        joinedload(WaitlistEntryModel.campaign), joinedload(WaitlistEntryModel.user)
+    ).filter_by(campaign_id=campaign_id).order_by(
+        WaitlistEntryModel.position, WaitlistEntryModel.id
+    ).all()
+    return [entry_details(db, entry) for entry in entries]
 
 
 @router.patch("/{entry_id}/respond", response_model=WaitlistEntryResponse)
@@ -86,4 +113,5 @@ def respond(
     response = request.response.upper()
     if response not in ("ACCEPTED", "DECLINED"):
         raise HTTPException(422, "response phải là ACCEPTED hoặc DECLINED")
-    return respond_to_invite(db, entry_id, current_user.id, response)
+    entry = respond_to_invite(db, entry_id, current_user.id, response)
+    return entry_details(db, entry)

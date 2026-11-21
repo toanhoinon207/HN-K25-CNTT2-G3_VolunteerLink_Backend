@@ -1,11 +1,15 @@
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, status, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.users import UserModel
-from app.models.organizations import OrganizationModel
-from app.services.organizations import OrganizationService
+
+from app.services.organizations import OrganizationService, OrganizerDashboardService
+from datetime import date
+from typing import Optional
+
+import traceback
 from app.schemas.organizations import (
     OrganizationCreate,
     OrganizationUpdate,
@@ -80,7 +84,7 @@ def list_organizations(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(require_role("ADMIN")),
 ):
-    return db.query(OrganizationModel).order_by(OrganizationModel.id.desc()).all()
+    return OrganizationService.get_all_organizations(db)
 
 
 @admin_router.get("/pending")
@@ -88,12 +92,15 @@ def list_pending_orgs(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(require_role("ADMIN"))
 ):
+
+    
+
     return OrganizationService.get_pending_organizations(db)
 
 @admin_router.patch("/{org_id}/review")
 def review_org(
     org_id: int,
-    action: str, # "APPROVE" hoặc "REJECT"
+    action: str, 
     reason: str = None,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(require_role("ADMIN"))
@@ -104,3 +111,32 @@ def review_org(
         "organization_id": updated_org.id,
         "status": updated_org.status
     }
+    
+@router.get("/stats")
+def get_organizer_dashboard(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)  
+):
+    if current_user.role.lower() not in ["organizer", "admin"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Bạn không có quyền truy cập."
+        )
+
+    try:
+        
+        stats = OrganizerDashboardService.get_organizer_dashboard_stats(
+            db=db,
+            current_user=current_user,
+            start_date=start_date,
+            end_date=end_date
+        )
+        return {
+            "message": "Thành công",
+            "data": stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    

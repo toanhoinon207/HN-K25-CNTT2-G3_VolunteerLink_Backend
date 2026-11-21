@@ -12,7 +12,7 @@ from app.schemas.notifications import (
     MarkReadResponse
 )
 
-from app.services.notification import (
+from app.services.notifications import (
     get_notifications,
     count_unread_notifications,
     mark_notification_read,

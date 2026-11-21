@@ -3,9 +3,6 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.users import UserModel
-from app.models.attendances import AttendanceModel
-from app.models.registration import RegistrationModel
-from app.models.campaigns import CampaignModel
 from app.dependencies.auth import require_role, get_current_user
 from app.schemas.attendance_codes import (
     AttendanceCodeCreate,
@@ -16,8 +13,9 @@ from app.schemas.attendances import AttendanceListItem, AttendanceResponse, Atte
 from app.services.attendances import (
     create_attendance_code,
     check_in,
-    check_out, 
+    check_out,
     get_campaign_attendances,
+    get_my_attendance_history as get_my_attendance_history_service,
     manual_attendance,
     update_attendance_status,
     update_attendance_time
@@ -37,32 +35,7 @@ def get_my_attendance_history(
     current_user: UserModel = Depends(get_current_user)
 ):
     """Lấy lịch sử điểm danh mới nhất của người dùng hiện tại từ Database."""
-    attendances = db.query(AttendanceModel).join(
-        RegistrationModel, AttendanceModel.registration_id == RegistrationModel.id
-    ).join(
-        CampaignModel, RegistrationModel.campaign_id == CampaignModel.id
-    ).filter(
-        RegistrationModel.user_id == current_user.id
-    ).order_by(
-        AttendanceModel.id.desc()
-    ).all()
-
-    result = []
-    for att in attendances:
-        reg = att.registration
-        camp = reg.campaign if reg else None
-        result.append({
-            "id": att.id,
-            "registration_id": att.registration_id,
-            "campaign_id": camp.id if camp else None,
-            "campaign_title": camp.title if camp else f"Chiến dịch #{att.registration_id}",
-            "check_in_at": att.check_in_at,
-            "check_out_at": att.check_out_at,
-            "total_minutes": att.total_minutes,
-            "status": att.status
-        })
-
-    return result
+    return get_my_attendance_history_service(db, current_user.id)
 
 
 @router.post(

@@ -5,11 +5,16 @@ from app.db.session import get_db
 from app.dependencies.auth import get_current_user, require_role
 from app.models.campaigns import CampaignModel
 from app.models.organizations import OrganizationModel
-from app.models.registration import RegistrationModel
 from app.models.users import UserModel
 from app.schemas.registration import RegistrationCreate, RegistrationResponse
-from app.services.registrations import create_registration, cancel_registration, get_campaign_registrations, reject_registration
-from app.services.registrations import approve_registration
+from app.services.registrations import (
+    approve_registration,
+    cancel_registration,
+    create_registration,
+    get_campaign_registrations,
+    get_my_registrations as get_my_registrations_service,
+    reject_registration,
+)
 from app.schemas.registration import RejectRegistrationRequest
 
 def verify_campaign_owner(db: Session, campaign_id: int, user_id: int):
@@ -36,26 +41,7 @@ def get_my_registrations(
     current_user: UserModel = Depends(get_current_user)
 ):
     """Lấy danh sách đơn đăng ký của chính người dùng hiện tại từ Database."""
-    regs = db.query(RegistrationModel).join(
-        CampaignModel, RegistrationModel.campaign_id == CampaignModel.id
-    ).filter(
-        RegistrationModel.user_id == current_user.id
-    ).order_by(
-        RegistrationModel.id.desc()
-    ).all()
-
-    return [
-        {
-            "id": r.id,
-            "campaign_id": r.campaign_id,
-            "campaign_title": r.campaign.title if r.campaign else f"Chiến dịch #{r.campaign_id}",
-            "status": r.status,
-            "message": r.message,
-            "rejection_reason": r.rejection_reason,
-            "created_at": r.created_at
-        }
-        for r in regs
-    ]
+    return get_my_registrations_service(db, current_user.id)
 
 
 @router.post("/", response_model=RegistrationResponse)

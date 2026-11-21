@@ -1,10 +1,11 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.models.registration import RegistrationModel
 from app.models.campaigns import CampaignModel
 from app.models.users import UserModel
+from app.services.campaigns import close_expired_campaigns
 from app.models.waitlist_entry import WaitlistEntryModel
 from app.services.notifications import create_notification
 from app.services.waitlist import add_to_waitlist, approved_count, active_invite_count, promote_after_vacancy
@@ -16,6 +17,7 @@ def now_vietnam():
 
 
 def create_registration(db : Session, user_id : int , campaign_id : int , message : str = None) :
+    close_expired_campaigns(db)
 
     # Khóa theo người dùng để tránh hai yêu cầu đăng ký đồng thời.
     db.query(UserModel).filter(UserModel.id == user_id).with_for_update().first()
@@ -302,8 +304,10 @@ def get_campaign_registrations(
     campaign_id: int,
     status: str = None
 ):
-    query = db.query(RegistrationModel).filter(
-        RegistrationModel.campaign_id == campaign_id
+    query = (
+        db.query(RegistrationModel)
+        .options(joinedload(RegistrationModel.user))
+        .filter(RegistrationModel.campaign_id == campaign_id)
     )
 
     if status:
@@ -311,4 +315,42 @@ def get_campaign_registrations(
             RegistrationModel.status == status
         )
 
-    return query.all()
+    regs = query.order_by(RegistrationModel.id.desc()).all()
+    return [
+        {
+            "id": r.id,
+            "user_id": r.user_id,
+            "campaign_id": r.campaign_id,
+            "status": r.status,
+            "message": r.message,
+            "rejection_reason": r.rejection_reason,
+            "created_at": r.created_at,
+            "user_name": r.user.full_name if r.user else None,
+            "user_email": r.user.email if r.user else None,
+            "user_phone": r.user.phone if r.user else None,
+        }
+        for r in regs
+    ]
+
+
+def get_my_registrations(db: Session, user_id: int):
+    regs = (
+        db.query(RegistrationModel)
+        .options(joinedload(RegistrationModel.campaign))
+        .filter(RegistrationModel.user_id == user_id)
+        .order_by(RegistrationModel.id.desc())
+        .all()
+    )
+
+    return [
+        {
+            "id": r.id,
+            "campaign_id": r.campaign_id,
+            "campaign_title": r.campaign.title if r.campaign else f"Chiến dịch #{r.campaign_id}",
+            "status": r.status,
+            "message": r.message,
+            "rejection_reason": r.rejection_reason,
+            "created_at": r.created_at,
+        }
+        for r in regs
+    ]

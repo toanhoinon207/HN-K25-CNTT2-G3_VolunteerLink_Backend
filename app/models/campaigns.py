@@ -30,6 +30,8 @@ class CampaignModel(Base):
     updated_at = Column(DateTime, default=now_vietnam, onupdate=now_vietnam)
     attendance_code = Column(String(6),nullable=True,unique=True)
     attendance_code_expires_at = Column(DateTime,nullable=True)
+    # NULL đối với mã cũ: không tự động hoàn thành chiến dịch.
+    attendance_code_type = Column(String(10), nullable=True)
    
     certificates = relationship("CertificateModel", back_populates="campaign")
     waitlist_entries = relationship("WaitlistEntryModel", back_populates="campaign")

@@ -1,11 +1,20 @@
 
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.organizations import OrganizationModel, OrganizationStatus
 from app.models.users import UserModel
 from app.schemas.organizations import OrganizationCreate, OrganizationUpdate
+
+from typing import Optional
+from app.models.attendances import AttendanceModel
+from app.models.registration import RegistrationModel
+from app.models.campaigns import CampaignModel
+from sqlalchemy import func
+from datetime import date, datetime
+
 from app.services.notifications import create_notification
+
 
 
 def get_organization_by_owner(db: Session, owner_id: int):
@@ -121,12 +130,51 @@ def update_my_organization_service(
 class OrganizationService:
 
     @staticmethod
+    def _serialize_admin_org(org: OrganizationModel) -> dict:
+        owner = org.owner
+        status_val = org.status.value if hasattr(org.status, "value") else str(org.status)
+        return {
+            "id": org.id,
+            "name": org.name,
+            "description": org.description,
+            "logo_url": org.logo_url,
+            "address": org.address,
+            "email": org.email,
+            "phone": org.phone,
+            "document_url": org.document_url,
+            "status": status_val,
+            "owner_id": org.owner_id,
+            "owner_name": owner.full_name if owner else None,
+            "owner_email": owner.email if owner else None,
+            "owner_phone": owner.phone if owner else None,
+            "owner_status": owner.status if owner else None,
+            "rejection_reason": org.rejection_reason,
+            "created_at": org.created_at,
+            "updated_at": org.updated_at,
+        }
+
+    @staticmethod
+    def get_all_organizations(db: Session):
+        """Lấy toàn bộ hồ sơ tổ chức kèm thông tin chủ sở hữu cho Admin."""
+        orgs = (
+            db.query(OrganizationModel)
+            .options(joinedload(OrganizationModel.owner))
+            .order_by(OrganizationModel.id.desc())
+            .all()
+        )
+        return [OrganizationService._serialize_admin_org(org) for org in orgs]
+
+    @staticmethod
     def get_pending_organizations(db: Session):
         """Lấy danh sách hồ sơ đang chờ duyệt."""
-
-        return db.query(OrganizationModel).filter(
-            OrganizationModel.status == OrganizationStatus.PENDING
-        ).all()
+        orgs = (
+            db.query(OrganizationModel)
+            .options(joinedload(OrganizationModel.owner))
+            .filter(OrganizationModel.status == OrganizationStatus.PENDING)
+            .order_by(OrganizationModel.id.desc())
+            .all()
+        )
+        return [OrganizationService._serialize_admin_org(org) for org in orgs]
 
     @staticmethod
     def review_organization(
@@ -216,3 +264,146 @@ class OrganizationService:
             db.refresh(user_owner)
 
         return org
+
+class OrganizerDashboardService:
+    
+    @staticmethod
+    def get_organizer_dashboard_stats(
+        db: Session,
+        current_user,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ):
+        # 1. Truy vấn các chiến dịch
+        campaign_query = db.query(CampaignModel)
+        
+        if current_user.role.lower() != "admin":
+            org = get_organization_by_owner(db, current_user.id)
+            if not org:
+                return {
+                    "total_campaigns": 0,
+                    "campaigns_by_status": {},
+                    "campaigns": [],
+                    "total_registrations": 0,
+                    "pending_registrations": 0,
+                    "approved_registrations": 0,
+                    "attendance_rate": 0.0,
+                    "total_verified_hours": 0.0,
+                    "top_volunteers": []
+                }
+            campaign_query = campaign_query.filter(CampaignModel.organization_id == org.id)
+        
+        # Lọc theo khoảng thời gian start_time của chiến dịch
+        if start_date:
+            start_datetime = datetime.combine(start_date, datetime.min.time())
+            campaign_query = campaign_query.filter(CampaignModel.start_time >= start_datetime)
+        if end_date:
+            end_datetime = datetime.combine(end_date, datetime.max.time())
+            campaign_query = campaign_query.filter(CampaignModel.start_time <= end_datetime)
+            
+        campaigns = campaign_query.all()
+        campaign_ids = [c.id for c in campaigns]
+
+        # 2. Thống kê số chiến dịch theo trạng thái và chuẩn bị danh sách chiến dịch chi tiết
+        status_counts = {}
+        campaign_list = []
+        for c in campaigns:
+            status_str = c.status.value if hasattr(c.status, "value") else str(c.status)
+            status_counts[status_str] = status_counts.get(status_str, 0) + 1
+            
+            # Lấy tên chiến dịch (thử thuộc tính title hoặc name)
+            campaign_title = getattr(c, "title", getattr(c, "name", f"Chiến dịch #{c.id}"))
+            
+            campaign_list.append({
+                "id": c.id,
+                "title": campaign_title,
+                "status": status_str,
+                "start_time": str(c.start_time) if c.start_time else None,
+                "end_time": str(c.end_time) if hasattr(c, "end_time") and c.end_time else None
+            })
+
+        if not campaign_ids:
+            return {
+                "total_campaigns": 0,
+                "campaigns_by_status": {},
+                "campaigns": [],
+                "total_registrations": 0,
+                "pending_registrations": 0,
+                "approved_registrations": 0,
+                "attendance_rate": 0.0,
+                "total_verified_hours": 0.0,
+                "top_volunteers": []
+            }
+
+        # 3. Tổng lượt đăng ký & theo trạng thái
+        total_registrations = db.query(RegistrationModel).filter(
+            RegistrationModel.campaign_id.in_(campaign_ids)
+        ).count()
+        pending_registrations = db.query(RegistrationModel).filter(
+            RegistrationModel.campaign_id.in_(campaign_ids),
+            RegistrationModel.status == "PENDING"
+        ).count()
+        approved_registrations = db.query(RegistrationModel).filter(
+            RegistrationModel.campaign_id.in_(campaign_ids),
+            RegistrationModel.status == "APPROVED"
+        ).count()
+
+        # 4. Tỉ lệ có mặt
+        total_attendances = db.query(AttendanceModel).join(
+            RegistrationModel, AttendanceModel.registration_id == RegistrationModel.id
+        ).filter(
+            RegistrationModel.campaign_id.in_(campaign_ids),
+            AttendanceModel.check_in_at.isnot(None)
+        ).count()
+        
+        attendance_rate = (total_attendances / approved_registrations * 100) if approved_registrations > 0 else 0.0
+
+        # 5. Tổng số giờ đóng góp đã xác minh
+        total_minutes_sum = db.query(func.sum(AttendanceModel.total_minutes)).join(
+            RegistrationModel, AttendanceModel.registration_id == RegistrationModel.id
+        ).filter(
+            RegistrationModel.campaign_id.in_(campaign_ids)
+        ).scalar() or 0
+        
+        total_verified_hours = round(float(total_minutes_sum) / 60.0, 2)
+
+        # 6. Top 10 tình nguyện viên
+        top_volunteers_query = db.query(
+            UserModel.id,
+            UserModel.full_name,
+            UserModel.email,
+            func.sum(AttendanceModel.total_minutes).label("total_minutes"),
+            func.count(AttendanceModel.id).label("total_sessions")
+        ).join(RegistrationModel, RegistrationModel.user_id == UserModel.id)\
+         .join(AttendanceModel, AttendanceModel.registration_id == RegistrationModel.id)\
+         .filter(
+             RegistrationModel.campaign_id.in_(campaign_ids),
+             AttendanceModel.check_in_at.isnot(None)
+         )\
+         .group_by(UserModel.id, UserModel.full_name, UserModel.email)\
+         .order_by(func.sum(AttendanceModel.total_minutes).desc())\
+         .limit(10).all()
+
+        top_volunteers = [
+            {
+                "user_id": v.id,
+                "full_name": v.full_name,
+                "email": v.email,
+                "total_hours": round(float(v.total_minutes or 0) / 60.0, 2),
+                "total_sessions": v.total_sessions
+            }
+            for v in top_volunteers_query
+        ]
+
+        return {
+            "total_campaigns": len(campaigns),
+            "campaigns_by_status": status_counts,
+            "campaigns": campaign_list,  # <--- Danh sách chi tiết các chiến dịch
+            "total_registrations": total_registrations,
+            "pending_registrations": pending_registrations,
+            "approved_registrations": approved_registrations,
+            "attendance_rate": round(attendance_rate, 2),
+            "total_verified_hours": total_verified_hours,
+            "top_volunteers": top_volunteers
+        }
+        

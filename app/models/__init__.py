@@ -13,3 +13,5 @@ from app.models.waitlist_entry import WaitlistEntryModel
 from app.models.organizations import OrganizationStatus
 from app.models.auth_sessions import AuthSessionModel
 from app.models.notifications import NotificationModel
+from app.models.attendance_appeals import AttendanceAppealModel
+from app.models.user_moderation import UserModerationHistoryModel
