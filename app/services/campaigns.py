@@ -313,19 +313,25 @@ def get_public_campaign_query(db: Session):
 
 def search_campaigns(query, keyword: str | None):
     if keyword and keyword.strip():
+        pattern = f"%{keyword.strip()}%"
         query = query.filter(
-            CampaignModel.title.ilike(
-                f"%{keyword.strip()}%"
+            or_(
+                CampaignModel.title.ilike(pattern),
+                CampaignModel.location.ilike(pattern),
             )
         )
 
     return query
 
 
-def filter_campaigns(query, category: str | None):
+def filter_campaigns(query, category: str | None, status: str | None = None):
     if category and category.strip():
         query = query.filter(
             CampaignModel.category == category.strip()
+        )
+    if status and status.strip():
+        query = query.filter(
+            CampaignModel.status == status.strip().upper()
         )
 
     return query
@@ -363,6 +369,7 @@ def get_public_campaigns(
     db: Session,
     keyword: str | None = None,
     category: str | None = None,
+    status: str | None = None,
     sort: str | None = None,
     page: int = 1,
     page_size: int = 6
@@ -370,7 +377,7 @@ def get_public_campaigns(
     close_expired_campaigns(db)
     query = get_public_campaign_query(db)
     query = search_campaigns(query, keyword)
-    query = filter_campaigns(query, category)
+    query = filter_campaigns(query, category, status)
     total = query.order_by(None).count()
     query = sort_campaigns(query, sort)
     query = paginate_campaigns(

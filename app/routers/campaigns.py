@@ -102,6 +102,7 @@ def cancel_campaign(
 def list_public_campaigns(
     keyword: str | None = None,
     category: str | None = None,
+    status: str | None = None,
     sort: str | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=6, ge=1, le=100),
@@ -111,6 +112,7 @@ def list_public_campaigns(
         db=db,
         keyword=keyword,
         category=category,
+        status=status,
         sort=sort,
         page=page,
         page_size=page_size
