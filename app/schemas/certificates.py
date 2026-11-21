@@ -89,6 +89,8 @@ class IssueCertificate(BaseModel):
 
 class CertificateDetails(CertificateResponse):
     campaign_title: str
+    organization_name: Optional[str] = None
+    volunteer_name: Optional[str] = None
 
     model_config = ConfigDict(
         from_attributes=True
