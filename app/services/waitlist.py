@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models.campaigns import CampaignModel
 from app.models.registration import RegistrationModel
+from app.models.users import UserModel
 from app.models.waitlist_entry import WaitlistEntryModel
 from app.services.notifications import create_notification
 
@@ -99,6 +100,8 @@ def list_campaign_waitlist(db: Session, campaign_id: int):
 
 
 def respond_to_invite(db: Session, waitlist_id: int, user_id: int, response: str):
+    # Đồng bộ thứ tự khóa với đăng ký và duyệt: User -> Campaign.
+    db.query(UserModel).filter_by(id=user_id).with_for_update().first()
     entry = db.query(WaitlistEntryModel).filter_by(id=waitlist_id).first()
     if entry is None:
         raise HTTPException(404, "Không tìm thấy lời mời")
@@ -138,6 +141,19 @@ def respond_to_invite(db: Session, waitlist_id: int, user_id: int, response: str
         entry.updated_at = now
         _invite_next(db, campaign)
     else:
+        if campaign.status != "OPEN" or campaign.registration_deadline <= now:
+            raise HTTPException(409, "Chiến dịch không còn nhận người tham gia")
+        # Không được duyệt từ danh sách chờ nếu trùng lịch đã được duyệt.
+        conflict = db.query(RegistrationModel.id).join(
+            CampaignModel, RegistrationModel.campaign_id == CampaignModel.id
+        ).filter(
+            RegistrationModel.user_id == user_id,
+            RegistrationModel.status == "APPROVED",
+            CampaignModel.start_time < campaign.end_time,
+            CampaignModel.end_time > campaign.start_time,
+        ).first()
+        if conflict:
+            raise HTTPException(409, "Lịch chiến dịch bị trùng với chiến dịch đã được duyệt")
         if approved_count(db, campaign.id) >= campaign.max_participants:
             raise HTTPException(409, "Chiến dịch đã đủ số lượng")
         registration = db.query(RegistrationModel).filter_by(

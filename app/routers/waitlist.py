@@ -10,7 +10,7 @@ from app.models.waitlist_entry import WaitlistEntryModel
 from app.schemas.waitlist_entry import WaitlistEntryResponse, WaitlistResponseRequest
 from app.services.waitlist import (
     add_to_waitlist, approved_count, active_invite_count, list_campaign_waitlist,
-    process_expired_invites, respond_to_invite,
+    process_expired_invites, respond_to_invite, promote_after_vacancy,
 )
 
 router = APIRouter(prefix="/waitlist", tags=["Waitlist"])
@@ -61,13 +61,19 @@ def join_waitlist(
         raise HTTPException(404, "Không tìm thấy chiến dịch")
     if campaign.status != "OPEN" or campaign.registration_deadline <= now_vietnam():
         raise HTTPException(409, "Chiến dịch đã đóng đăng ký")
-    if approved_count(db, campaign_id) + active_invite_count(db, campaign_id) < campaign.max_participants:
+    has_queue = db.query(WaitlistEntryModel.id).filter_by(
+        campaign_id=campaign_id, status="WAITING"
+    ).first() is not None
+    if not has_queue and approved_count(db, campaign_id) + active_invite_count(db, campaign_id) < campaign.max_participants:
         raise HTTPException(409, "Chiến dịch vẫn còn chỗ; hãy đăng ký theo luồng thông thường")
     registration = db.query(RegistrationModel).filter_by(
         user_id=current_user.id, campaign_id=campaign_id
     ).first()
     if registration and registration.status not in ("CANCELLED", "WAITLISTED"):
         raise HTTPException(409, "Bạn đã đăng ký chiến dịch này")
+    # Trước khi thêm người mới, ưu tiên gửi lời mời cho người đã chờ.
+    if has_queue:
+        promote_after_vacancy(db, campaign_id)
     entry = add_to_waitlist(db, current_user.id, campaign_id)
     if registration is None or registration.status == "CANCELLED":
         if registration is None:
