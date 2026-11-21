@@ -67,8 +67,17 @@ def create_registration(db : Session, user_id : int , campaign_id : int , messag
                 detail="Lịch chiến dịch bị trùng với chiến dịch đã được duyệt"
             )
 
-    # Chiến dịch đã đủ chỗ: ghi nhận đăng ký và xếp hàng tự động.
-    if approved_count(db, campaign_id) + active_invite_count(db, campaign_id) >= campaign.max_participants:
+    # Người đã xếp hàng được ưu tiên tuyệt đối: không cho đơn mới vượt hàng,
+    # kể cả khi đang có chỗ trống nhưng lượt mời kế tiếp chưa được xử lý.
+    has_queue = db.query(WaitlistEntryModel.id).filter(
+        WaitlistEntryModel.campaign_id == campaign_id,
+        WaitlistEntryModel.status == "WAITING",
+    ).first() is not None
+    if has_queue:
+        promote_after_vacancy(db, campaign_id)
+
+    # Khi còn người chờ, đơn mới phải xếp cuối hàng (FIFO).
+    if has_queue or approved_count(db, campaign_id) + active_invite_count(db, campaign_id) >= campaign.max_participants:
         if old_registration:
             old_registration.status = "WAITLISTED"
             old_registration.message = message
@@ -123,6 +132,8 @@ def create_registration(db : Session, user_id : int , campaign_id : int , messag
     return registration
 
 def cancel_registration(db: Session, registration_id: int, user_id: int):
+    # Khóa user trước campaign để hạn chế deadlock với luồng duyệt/đăng ký.
+    db.query(UserModel).filter(UserModel.id == user_id).with_for_update().first()
 
     # 1. Tìm đăng ký
     registration = db.query(RegistrationModel).filter(
@@ -134,7 +145,7 @@ def cancel_registration(db: Session, registration_id: int, user_id: int):
         raise HTTPException(status_code=404, detail="Không tìm thấy đăng ký")
 
     # 2. Kiểm tra trạng thái đăng ký
-    if registration.status not in ["PENDING", "APPROVED"]:
+    if registration.status not in ["PENDING", "APPROVED", "WAITLISTED"]:
         raise HTTPException(
             status_code=400,
             detail="Không thể hủy đăng ký này"
@@ -149,7 +160,7 @@ def cancel_registration(db: Session, registration_id: int, user_id: int):
     now = now_vietnam()
     deadline = campaign.start_time - timedelta(hours=24)
 
-    if now > deadline:
+    if registration.status != "WAITLISTED" and now > deadline:
         raise HTTPException(
             status_code=400,
             detail="Chỉ được hủy trước giờ bắt đầu ít nhất 24 giờ"
@@ -157,10 +168,18 @@ def cancel_registration(db: Session, registration_id: int, user_id: int):
 
     # 5. Cập nhật trạng thái
     was_approved = registration.status == "APPROVED"
+    waitlist_entry = db.query(WaitlistEntryModel).filter_by(
+        user_id=user_id, campaign_id=registration.campaign_id
+    ).with_for_update().first()
+    was_invited = bool(waitlist_entry and waitlist_entry.status == "INVITED")
+    if waitlist_entry and waitlist_entry.status in ("WAITING", "INVITED"):
+        waitlist_entry.status = "DECLINED"
+        waitlist_entry.responded_at = now
+        waitlist_entry.updated_at = now
     registration.status = "CANCELLED"
     try:
         # Hủy đăng ký đã duyệt tạo chỗ trống; mời người đầu hàng ngay.
-        if was_approved:
+        if was_approved or was_invited:
             promote_after_vacancy(db, registration.campaign_id)
         db.commit()
     except Exception:
