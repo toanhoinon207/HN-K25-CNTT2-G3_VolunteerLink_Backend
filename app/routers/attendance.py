@@ -51,6 +51,20 @@ def create_code(
     return create_attendance_code(db, data, current_user)
 
 
+@router.get("/campaigns/{campaign_id}/code/current")
+def current_code(campaign_id: int, db: Session = Depends(get_db),
+                 current_user: UserModel = Depends(require_role("ORGANIZER"))):
+    from app.services.attendances import get_current_attendance_code
+    return get_current_attendance_code(db, campaign_id, current_user)
+
+
+@router.get("/campaigns/{campaign_id}/code/history")
+def code_history(campaign_id: int, db: Session = Depends(get_db),
+                 current_user: UserModel = Depends(require_role("ORGANIZER"))):
+    from app.services.attendances import get_attendance_code_history
+    return get_attendance_code_history(db, campaign_id, current_user)
+
+
 @router.post("/check-in", response_model=AttendanceResponse)
 def attendance_check_in(
     data: AttendanceCheckRequest,

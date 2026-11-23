@@ -10,6 +10,7 @@ from app.models.users import UserModel
 from app.models.volunteer_profiles import VolunteerProfileModel
 from app.models.certificate import CertificateModel
 from app.models.attendances import AttendanceModel
+from app.models.hourclaims import HourClaimModel
 from app.models.registration import RegistrationModel
 from app.models.auth_sessions import AuthSessionModel, now_utc
 
@@ -22,17 +23,17 @@ from app.schemas.volunteer_profile import VolunteerProfileUpdate
 from app.core.security import hash_password, verify_password
 
 
-# 1. Tính tổng giờ đóng góp (kết hợp module Điểm danh & Chứng nhận)
+# 1. Tính tổng giờ đóng góp đã xác minh (Chứng nhận ACTIVE + HourClaim VERIFIED chưa có chứng nhận)
 def get_total_hours(db: Session, user_id: int) -> float:
-    # 1.1. Lấy danh sách ID các chiến dịch đã có chứng nhận chính thức (ACTIVE)
-    cert_campaign_ids = [
+    # 1.1. Danh sách tất cả các chiến dịch đã từng được cấp chứng nhận (cả ACTIVE và REVOKED)
+    # Nếu chứng nhận bị REVOKED thì tuyệt đối không cộng lại giờ của chiến dịch đó.
+    all_cert_campaign_ids = [
         row[0] for row in db.query(CertificateModel.campaign_id).filter(
-            CertificateModel.user_id == user_id,
-            CertificateModel.status == "ACTIVE"
+            CertificateModel.user_id == user_id
         ).all()
     ]
 
-    # Tổng giờ từ module Chứng nhận
+    # Tổng giờ từ các chứng nhận đang hợp lệ (ACTIVE)
     cert_hours = db.query(
         func.coalesce(
             func.sum(CertificateModel.total_hours), 0
@@ -42,26 +43,27 @@ def get_total_hours(db: Session, user_id: int) -> float:
         CertificateModel.status == "ACTIVE"
     ).scalar()
 
-    # 1.2. Tổng giờ từ module Điểm danh (status == PRESENT)
-    att_query = db.query(
+    # 1.2. Tổng giờ từ các yêu cầu xác minh giờ đã được duyệt (VERIFIED) nhưng chưa phát hành chứng nhận
+    verified_claim_query = db.query(
         func.coalesce(
-            func.sum(AttendanceModel.total_minutes), 0
+            func.sum(HourClaimModel.approved_hours), 0
         )
     ).join(
-        RegistrationModel, AttendanceModel.registration_id == RegistrationModel.id
+        RegistrationModel, HourClaimModel.registration_id == RegistrationModel.id
     ).filter(
         RegistrationModel.user_id == user_id,
-        AttendanceModel.status == "PRESENT"
+        HourClaimModel.user_id == user_id,
+        HourClaimModel.status == "VERIFIED",
     )
 
-    # Loại trừ chiến dịch đã có chứng nhận để tránh tính trùng giờ
-    if cert_campaign_ids:
-        att_query = att_query.filter(~RegistrationModel.campaign_id.in_(cert_campaign_ids))
+    if all_cert_campaign_ids:
+        verified_claim_query = verified_claim_query.filter(
+            ~RegistrationModel.campaign_id.in_(all_cert_campaign_ids)
+        )
 
-    uncertified_att_minutes = att_query.scalar()
-    uncertified_att_hours = round(float(uncertified_att_minutes) / 60.0, 1)
+    uncertified_verified_hours = verified_claim_query.scalar()
 
-    total = round(float(cert_hours) + uncertified_att_hours, 1)
+    total = round(float(cert_hours) + float(uncertified_verified_hours), 1)
     return float(total)
 
 
@@ -145,6 +147,17 @@ def upload_user_avatar(db: Session, user: UserModel, file: UploadFile):
         raise HTTPException(
             status_code=413,
             detail="Kích thước ảnh tối đa là 2MB."
+        )
+
+    is_valid_image = (
+        (ext == ".jpg" and content.startswith(b"\xff\xd8\xff"))
+        or (ext == ".png" and content.startswith(b"\x89PNG\r\n\x1a\n"))
+        or (ext == ".webp" and len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP")
+    )
+    if not is_valid_image:
+        raise HTTPException(
+            status_code=400,
+            detail="Nội dung file không khớp định dạng ảnh JPG, PNG hoặc WEBP."
         )
 
     AVATAR_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)

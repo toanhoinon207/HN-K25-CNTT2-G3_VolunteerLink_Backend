@@ -66,17 +66,26 @@ def seed_organizations(db: Session):
 
             owner = db.query(UserModel).filter(
                 UserModel.email == data["owner_email"],
-                UserModel.role == "ORGANIZER"
+                UserModel.role.in_(["ORGANIZER", "USER"])
             ).first()
 
             if not owner:
                 print(
                     f"Bỏ qua {data['name']}: "
                     f"chưa có tài khoản {data['owner_email']} "
-                    "với role ORGANIZER"
+                    "trong hệ thống"
                 )
                 skipped += 1
                 continue
+
+            # Đảm bảo tính nhất quán giữa trạng thái tổ chức và vai trò chủ sở hữu
+            expected_role = (
+                "ORGANIZER"
+                if data["status"] == OrganizationStatus.APPROVED
+                else "USER"
+            )
+            if owner.role != expected_role:
+                owner.role = expected_role
 
             existing = db.query(OrganizationModel).filter(
                 OrganizationModel.owner_id == owner.id

@@ -95,7 +95,7 @@ def get_eligible_recipients(db: Session, owner_id: int) -> list[dict]:
             "campaign_title": registration.campaign.title,
             "user_id": registration.user_id,
             "user_name": registration.user.full_name,
-            "verified_hours": claim.approved_hours,
+            "approved_hours": claim.approved_hours,
         }
         for registration, claim in rows
         if counts[registration.id] == 1
@@ -106,6 +106,7 @@ def issue_certificate(
     db: Session,
     payload: IssueCertificate,
     owner_id: int,
+    commit: bool = True,
 ) -> CertificateDetails:
     campaign = (
         db.query(CampaignModel)
@@ -174,11 +175,14 @@ def issue_certificate(
         f"user-dashboard.html?tab=certificates&certificate={certificate.certificate_code}",
     )
     try:
-        db.commit()
+        if commit:
+            db.commit()
+            db.refresh(certificate)
+        else:
+            db.flush()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Không thể cấp chứng chỉ do xung đột dữ liệu.")
-    db.refresh(certificate)
     loaded = (
         db.query(CertificateModel)
         .options(
@@ -232,10 +236,10 @@ def get_all_certificates(
 def revoke_certificate(
     db: Session, certificate_id: int, admin_id: int, reason: str
 ) -> CertificateModel:
-    """Router chịu trách nhiệm xác thực quyền ADMIN.
+    """Router chịu trách nhiệm xác thực quyền ADMIN."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
 
-    Không dùng revoked_at/revoked_by vì chúng chưa có trên model hiện tại.
-    """
     reason = (reason or "").strip()
     if not reason:
         raise ValueError("Vui lòng nhập lý do thu hồi chứng chỉ.")
@@ -251,6 +255,8 @@ def revoke_certificate(
         raise ValueError("Chứng chỉ đã bị thu hồi.")
     certificate.status = "REVOKED"
     certificate.revoked_reason = reason
+    certificate.revoked_at = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).replace(tzinfo=None)
+    certificate.revoked_by = admin_id
     create_notification(
         db=db,
         user_id=certificate.user_id,

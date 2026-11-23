@@ -31,7 +31,7 @@ class AdminDashboardService:
                 "full_name": getattr(u, "full_name", getattr(u, "username", f"User #{u.id}")),
                 "email": getattr(u, "email", None),
                 "role": role_val,
-                "is_active": getattr(u, "is_active", True),
+                "is_active": getattr(u, "status", "ACTIVE") == "ACTIVE",
             })
 
         # 2. Tổ chức (tổng và chi tiết)

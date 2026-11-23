@@ -7,7 +7,7 @@ from app.models.campaigns import CampaignModel
 from app.models.users import UserModel
 from app.services.campaigns import close_expired_campaigns
 from app.models.waitlist_entry import WaitlistEntryModel
-from app.services.notifications import create_notification
+from app.services.notifications import create_notification, notify_campaign_organizer
 from app.services.waitlist import add_to_waitlist, approved_count, active_invite_count, promote_after_vacancy
 
 def now_vietnam():
@@ -75,6 +75,10 @@ def create_registration(db : Session, user_id : int , campaign_id : int , messag
     ).first() is not None
     if has_queue:
         promote_after_vacancy(db, campaign_id)
+        has_queue = db.query(WaitlistEntryModel.id).filter(
+            WaitlistEntryModel.campaign_id == campaign_id,
+            WaitlistEntryModel.status == "WAITING",
+        ).first() is not None
 
     # Khi còn người chờ, đơn mới phải xếp cuối hàng (FIFO).
     if has_queue or approved_count(db, campaign_id) + active_invite_count(db, campaign_id) >= campaign.max_participants:
@@ -91,6 +95,9 @@ def create_registration(db : Session, user_id : int , campaign_id : int , messag
             )
             db.add(registration)
         add_to_waitlist(db, user_id, campaign_id)
+        notify_campaign_organizer(db, campaign_id, "Có tình nguyện viên vào danh sách chờ",
+                                  f'Chiến dịch "{campaign.title}" có đăng ký vào danh sách chờ.',
+                                  f"organizer-dashboard.html?tab=volunteers&campaign_id={campaign_id}")
         db.commit()
         db.refresh(registration)
         return registration
@@ -112,6 +119,9 @@ def create_registration(db : Session, user_id : int , campaign_id : int , messag
         old_registration.message = message
         old_registration.rejection_reason = None
         old_registration.created_at = now
+        notify_campaign_organizer(db, campaign_id, "Có đơn đăng ký mới",
+                                  f'Có đơn đăng ký tham gia chiến dịch "{campaign.title}".',
+                                  f"organizer-dashboard.html?tab=volunteers&campaign_id={campaign_id}")
 
         db.commit()
         db.refresh(old_registration)
@@ -126,6 +136,9 @@ def create_registration(db : Session, user_id : int , campaign_id : int , messag
     )
 
     db.add(registration)
+    notify_campaign_organizer(db, campaign_id, "Có đơn đăng ký mới",
+                              f'Có đơn đăng ký tham gia chiến dịch "{campaign.title}".',
+                              f"organizer-dashboard.html?tab=volunteers&campaign_id={campaign_id}")
     db.commit()
     db.refresh(registration)
 
@@ -158,12 +171,12 @@ def cancel_registration(db: Session, registration_id: int, user_id: int):
 
     # 4. Kiểm tra thời gian hủy
     now = now_vietnam()
-    deadline = campaign.start_time - timedelta(hours=24)
+    deadline = campaign.start_time - timedelta(hours=8)
 
     if registration.status != "WAITLISTED" and now > deadline:
         raise HTTPException(
             status_code=400,
-            detail="Chỉ được hủy trước giờ bắt đầu ít nhất 24 giờ"
+            detail="Chỉ được hủy trước giờ bắt đầu ít nhất 8 giờ"
         )
 
     # 5. Cập nhật trạng thái
@@ -178,6 +191,14 @@ def cancel_registration(db: Session, registration_id: int, user_id: int):
         waitlist_entry.updated_at = now
     registration.status = "CANCELLED"
     try:
+        if was_approved:
+            notify_campaign_organizer(
+                db,
+                registration.campaign_id,
+                "Tình nguyện viên đã hủy đăng ký",
+                f'Một tình nguyện viên đã duyệt vừa hủy tham gia chiến dịch "{campaign.title}".',
+                f"organizer-dashboard.html?tab=volunteers&campaign_id={registration.campaign_id}",
+            )
         # Hủy đăng ký đã duyệt tạo chỗ trống; mời người đầu hàng ngay.
         if was_approved or was_invited:
             promote_after_vacancy(db, registration.campaign_id)
@@ -290,22 +311,37 @@ def reject_registration(
         campaign_id : int ,
         reason : str 
 ):
-    registration = db.query(RegistrationModel).filter(
-        RegistrationModel.id == registration_id,
-        RegistrationModel.campaign_id == campaign_id
-    ).first()
-
-    if not registration:
-        raise HTTPException(404,"không tìm thấy đăng ký") 
-    if registration.status != "PENDING" :
-        raise HTTPException (400, " đăng ký không ở trạng thái chờ duyệt")
-
     if not reason or not reason.strip():
         raise HTTPException(400,"Vui lòng nhập lý do từ chối")
 
     try :
+        registration_user_id = db.query(RegistrationModel.user_id).filter(
+            RegistrationModel.id == registration_id,
+            RegistrationModel.campaign_id == campaign_id
+        ).scalar()
+        if registration_user_id is None:
+            raise HTTPException(404,"không tìm thấy đăng ký")
+
+        db.query(UserModel).filter(UserModel.id == registration_user_id).with_for_update().first()
+        db.query(CampaignModel).filter(CampaignModel.id == campaign_id).with_for_update().first()
+
+        registration = db.query(RegistrationModel).filter(
+            RegistrationModel.id == registration_id,
+            RegistrationModel.campaign_id == campaign_id
+        ).with_for_update().first()
+
+        if not registration:
+            raise HTTPException(404,"không tìm thấy đăng ký") 
+        if registration.status != "PENDING" :
+            raise HTTPException (400, " đăng ký không ở trạng thái chờ duyệt")
+
         registration.status = "REJECTED"
         registration.rejection_reason = reason.strip()
+        create_notification(
+            db, registration.user_id, "Đăng ký chiến dịch bị từ chối",
+            f'Yêu cầu tham gia chiến dịch #{campaign_id} bị từ chối. Lý do: {registration.rejection_reason}',
+            f"user-dashboard.html?tab=overview&campaign_id={campaign_id}",
+        )
 
         # Nếu đang có chỗ trống, chuyển lời mời cho người đầu hàng.
         promote_after_vacancy(db, campaign_id)

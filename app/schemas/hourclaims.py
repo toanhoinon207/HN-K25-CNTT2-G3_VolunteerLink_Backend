@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Optional
@@ -5,8 +6,20 @@ from typing import Optional
 from pydantic import (
     BaseModel,
     ConfigDict,
-    Field
+    Field,
+    field_validator,
 )
+
+
+def _validate_evidence_url(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    cleaned = v.strip()
+    if not cleaned:
+        return None
+    if not cleaned.startswith(("http://", "https://")):
+        raise ValueError("URL minh chứng phải bắt đầu bằng http:// hoặc https://.")
+    return cleaned
 
 
 class HourClaimStatus(str, Enum):
@@ -32,6 +45,7 @@ class HourClaimCreate(BaseModel):
     claimed_hours: Optional[Decimal] = Field(
         None,
         gt=0,
+        le=Decimal("9999.99"),
         description="Số giờ đề nghị. Để trống sẽ lấy số giờ thực tế."
     )
 
@@ -41,6 +55,11 @@ class HourClaimCreate(BaseModel):
         None,
         max_length=500
     )
+
+    @field_validator("evidence_url")
+    @classmethod
+    def check_evidence_url(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_evidence_url(v)
 
 
 # =====================================================
@@ -53,7 +72,8 @@ class HourClaimReview(BaseModel):
 
     approved_hours: Optional[Decimal] = Field(
         None,
-        gt=0
+        gt=0,
+        le=Decimal("9999.99")
     )
 
     rejection_reason: Optional[str] = None
@@ -75,6 +95,11 @@ class HourClaimAppealCreate(BaseModel):
         max_length=500
     )
 
+    @field_validator("appeal_evidence_url")
+    @classmethod
+    def check_appeal_evidence_url(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_evidence_url(v)
+
 
 # =====================================================
 # ADMIN: XỬ LÝ KHIẾU NẠI
@@ -86,7 +111,8 @@ class HourClaimAppealReview(BaseModel):
 
     approved_hours: Optional[Decimal] = Field(
         None,
-        gt=0
+        gt=0,
+        le=Decimal("9999.99")
     )
 
     admin_note: Optional[str] = None
@@ -114,7 +140,7 @@ class HourClaimResponse(BaseModel):
     status: HourClaimStatus
 
     verified_by: Optional[int] = None
-    verified_at: Optional[object] = None
+    verified_at: Optional[datetime] = None
     rejection_reason: Optional[str] = None
 
     appeal_reason: Optional[str] = None
@@ -123,10 +149,10 @@ class HourClaimResponse(BaseModel):
 
     admin_id: Optional[int] = None
     admin_note: Optional[str] = None
-    resolved_at: Optional[object] = None
+    resolved_at: Optional[datetime] = None
 
-    created_at: Optional[object] = None
-    updated_at: Optional[object] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(
         from_attributes=True

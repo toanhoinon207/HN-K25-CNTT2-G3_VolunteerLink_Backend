@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -7,6 +7,7 @@ from app.dependencies.auth import require_role
 from app.models.users import UserModel
 
 from app.schemas.campaigns import (
+    AdminCampaignDetailResponse,
     CampaignCancelRequest,
     CampaignCreate,
     CampaignDetailResponse,
@@ -26,6 +27,14 @@ router = APIRouter(
     prefix="/campaigns",
     tags=["Campaigns"]
 )
+
+
+@router.post("/upload-image")
+def upload_campaign_image(
+    file: UploadFile = File(...),
+    current_user: UserModel = Depends(require_role("ORGANIZER")),
+):
+    return campaign_service.upload_campaign_image(file)
 
 
 @router.post(
@@ -92,6 +101,22 @@ def cancel_campaign(
 ):
     return campaign_service.cancel_campaign(
         db, campaign_id, data, current_user
+    )
+
+
+@router.patch(
+    "/{campaign_id}/complete",
+    response_model=CampaignResponse
+)
+def complete_campaign(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(
+        require_role("ORGANIZER")
+    )
+):
+    return campaign_service.complete_campaign_by_organizer(
+        db, campaign_id, current_user
     )
 
 
@@ -172,6 +197,18 @@ def list_pending_campaigns(
     current_user: UserModel = Depends(require_role("ADMIN"))
 ):
     return campaign_service.get_pending_campaigns(db)
+
+
+@admin_router.get(
+    "/{campaign_id}",
+    response_model=AdminCampaignDetailResponse
+)
+def admin_campaign_detail(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("ADMIN"))
+):
+    return campaign_service.get_admin_campaign_detail(db, campaign_id)
 
 
 @admin_router.patch(

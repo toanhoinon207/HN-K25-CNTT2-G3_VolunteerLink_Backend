@@ -15,3 +15,6 @@ from app.models.auth_sessions import AuthSessionModel
 from app.models.notifications import NotificationModel
 from app.models.attendance_appeals import AttendanceAppealModel
 from app.models.user_moderation import UserModerationHistoryModel
+
+from app.models.attendance_code_issues import AttendanceCodeIssueModel
+from app.models.password_reset_tokens import PasswordResetTokenModel

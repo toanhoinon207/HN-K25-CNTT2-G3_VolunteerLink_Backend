@@ -8,6 +8,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.campaigns import CampaignModel
+from app.models.attendance_code_issues import AttendanceCodeIssueModel
+from app.models.certificate import CertificateModel
+from app.models.hourclaims import HourClaimModel
 from app.models.organizations import OrganizationModel
 from app.models.registration import RegistrationModel
 from app.models.attendances import AttendanceModel
@@ -120,26 +123,54 @@ def create_attendance_code(db, data, current_user):
 
         validate_campaign_time(campaign, now)
 
-        # CHECK-OUT là mã kết thúc cuối cùng. Không cho ghi đè hoặc cấp lại
-        # sau khi đã phát: nếu không, hết hạn của mã đầu tiên sẽ bị bỏ qua.
+        # If an active code of the requested type exists, return the same code.
+        # No silent rotation and no duplicate issue on a retry / refresh.
+        current_issue = (db.query(AttendanceCodeIssueModel)
+            .filter(AttendanceCodeIssueModel.campaign_id == campaign.id)
+            .order_by(AttendanceCodeIssueModel.id.desc()).first())
+        active = (campaign.attendance_code is not None
+            and campaign.attendance_code_expires_at is not None
+            and now < campaign.attendance_code_expires_at)
         if campaign.attendance_code_type == "CHECK_OUT":
-            raise HTTPException(409, "Đã phát mã CHECK-OUT; không thể cấp lại")
-
+            if data.code_type == "CHECK_OUT" and active:
+                return {"code": campaign.attendance_code,
+                        "expires_at": campaign.attendance_code_expires_at,
+                        "code_type": "CHECK_OUT"}
+            if data.code_type != "CHECK_OUT":
+                raise HTTPException(409, "Đã phát mã CHECK-OUT; không thể quay lại phát mã CHECK-IN")
+        if active:
+            if campaign.attendance_code_type == data.code_type:
+                return {"code": campaign.attendance_code,
+                        "expires_at": campaign.attendance_code_expires_at,
+                        "code_type": data.code_type}
+            # Cho phép Organizer phát mã CHECK-OUT bất cứ lúc nào khi cần,
+            # tự động thu hồi mã CHECK-IN đang hiệu lực trước đó.
+            if data.code_type == "CHECK_OUT":
+                db.query(AttendanceCodeIssueModel).filter(
+                    AttendanceCodeIssueModel.campaign_id == campaign.id,
+                    AttendanceCodeIssueModel.code_type == "CHECK_IN",
+                    AttendanceCodeIssueModel.revoked_at.is_(None),
+                ).update({AttendanceCodeIssueModel.revoked_at: now}, synchronize_session=False)
+            else:
+                raise HTTPException(409, "Mã CHECK-IN đang hiệu lực; chờ hết hạn trước khi phát CHECK-OUT")
         code = generate_code()
-        while db.query(CampaignModel).filter(
-            CampaignModel.attendance_code == code,
-            CampaignModel.id != campaign.id
-        ).first() is not None:
+        while (db.query(CampaignModel).filter(
+            CampaignModel.attendance_code == code, CampaignModel.id != campaign.id
+        ).first() is not None or db.query(AttendanceCodeIssueModel.id).filter(
+            AttendanceCodeIssueModel.code == code,
+            AttendanceCodeIssueModel.expires_at > now,
+            AttendanceCodeIssueModel.revoked_at.is_(None),
+        ).first() is not None):
             code = generate_code()
 
-        expires_at = min(
-            now + timedelta(minutes=data.expires_minutes),
-            campaign.end_time
-        )
-
+        expires_at = min(now + timedelta(minutes=data.expires_minutes), campaign.end_time)
         campaign.attendance_code = code
         campaign.attendance_code_expires_at = expires_at
         campaign.attendance_code_type = data.code_type
+        db.add(AttendanceCodeIssueModel(
+            campaign_id=campaign.id, issued_by=current_user.id, code=code,
+            code_type=data.code_type, issued_at=now, expires_at=expires_at,
+        ))
 
         db.commit()
 
@@ -257,6 +288,28 @@ def check_organizer_campaign(db, campaign_id, current_user):
     return campaign
 
 
+def ensure_attendance_editable(db: Session, registration: RegistrationModel):
+    verified_claim = db.query(HourClaimModel.id).filter(
+        HourClaimModel.registration_id == registration.id,
+        HourClaimModel.status == "VERIFIED",
+    ).first()
+    if verified_claim is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Đã xác minh giờ đóng góp; không thể chỉnh sửa trực tiếp điểm danh",
+        )
+    active_cert = db.query(CertificateModel.id).filter(
+        CertificateModel.campaign_id == registration.campaign_id,
+        CertificateModel.user_id == registration.user_id,
+        CertificateModel.status == "ACTIVE",
+    ).first()
+    if active_cert is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Đã cấp chứng nhận cho tình nguyện viên; không thể chỉnh sửa trực tiếp điểm danh",
+        )
+
+
 # =====================================================
 # ORGANIZER: LẤY DANH SÁCH TNV ĐÃ ĐƯỢC DUYỆT
 # =====================================================
@@ -307,11 +360,24 @@ def get_campaign_attendances(db, campaign_id, current_user):
 # ORGANIZER: ĐIỂM DANH THỦ CÔNG
 # =====================================================
 
+def _clamp_time_to_campaign(now: datetime, campaign: CampaignModel) -> datetime:
+    if campaign.start_time and now < campaign.start_time:
+        return campaign.start_time
+    if campaign.end_time and now > campaign.end_time:
+        return campaign.end_time
+    return now
+
+
 def manual_attendance(db, campaign_id, data, current_user):
     try:
-        check_organizer_campaign(
+        campaign = check_organizer_campaign(
             db, campaign_id, current_user
         )
+        now = now_vietnam()
+        if campaign.status in ("CANCELLED", "DRAFT", "PENDING"):
+            raise HTTPException(400, "Chiến dịch không cho phép điểm danh")
+        if campaign.start_time and now < campaign.start_time:
+            raise HTTPException(400, "Chiến dịch chưa bắt đầu")
 
         registration = db.query(RegistrationModel).filter(
             RegistrationModel.id == data.registration_id,
@@ -335,12 +401,12 @@ def manual_attendance(db, campaign_id, data, current_user):
                 detail="Tình nguyện viên đã có bản ghi điểm danh"
             )
 
-        now = now_vietnam()
+        default_checkin = _clamp_time_to_campaign(now, campaign)
 
         attendance = AttendanceModel(
             registration_id=registration.id,
             status=data.status,
-            check_in_at=now if data.status == "PRESENT" else None,
+            check_in_at=default_checkin if data.status == "PRESENT" else None,
             check_out_at=None,
             total_minutes=0,
             recorded_by=current_user.id
@@ -389,9 +455,10 @@ def update_attendance_status(
         if registration is None:
             raise HTTPException(404, "Không tìm thấy đăng ký")
 
-        check_organizer_campaign(
+        campaign = check_organizer_campaign(
             db, registration.campaign_id, current_user
         )
+        ensure_attendance_editable(db, registration)
 
         now = now_vietnam()
 
@@ -407,7 +474,7 @@ def update_attendance_status(
 
         elif data.status == "PRESENT":
             if attendance.check_in_at is None:
-                attendance.check_in_at = now
+                attendance.check_in_at = _clamp_time_to_campaign(now, campaign)
 
         db.commit()
         db.refresh(attendance)
@@ -447,9 +514,10 @@ def update_attendance_time(
                 detail="Không tìm thấy đăng ký"
             )
 
-        check_organizer_campaign(
+        campaign = check_organizer_campaign(
             db, registration.campaign_id, current_user
         )
+        ensure_attendance_editable(db, registration)
 
         if attendance.status != "PRESENT":
             raise HTTPException(
@@ -481,6 +549,18 @@ def update_attendance_time(
             raise HTTPException(
                 status_code=400,
                 detail="Phải có giờ check-in trước khi ghi nhận check-out"
+            )
+
+        if check_in is not None and (check_in < campaign.start_time or check_in > campaign.end_time):
+            raise HTTPException(
+                status_code=422,
+                detail="Giờ check-in phải nằm trong khoảng thời gian diễn ra chiến dịch"
+            )
+
+        if check_out is not None and check_out > campaign.end_time:
+            raise HTTPException(
+                status_code=422,
+                detail="Giờ check-out không được vượt quá thời gian kết thúc chiến dịch"
             )
 
         if check_in is not None and check_out is not None:
@@ -541,3 +621,32 @@ def get_my_attendance_history(db: Session, user_id: int):
             "status": att.status,
         })
     return result
+
+def get_attendance_code_history(db, campaign_id, current_user):
+    check_organizer_campaign(db, campaign_id, current_user)
+    campaign = get_campaign(db, campaign_id)
+    now = now_vietnam()
+    issues = (db.query(AttendanceCodeIssueModel)
+        .filter(AttendanceCodeIssueModel.campaign_id == campaign_id)
+        .order_by(AttendanceCodeIssueModel.id.desc()).limit(100).all())
+    return [{"id": issue.id, "code": issue.code,
+             "code_type": issue.code_type, "issued_by": issue.issued_by,
+             "issued_at": issue.issued_at, "expires_at": issue.expires_at,
+             "is_current": issue.code == campaign.attendance_code and issue.code_type == campaign.attendance_code_type,
+             "is_active": (issue.code == campaign.attendance_code and
+                issue.code_type == campaign.attendance_code_type and
+                now < issue.expires_at and campaign.status in ("OPEN", "CLOSED")),
+             } for issue in issues]
+
+
+def get_current_attendance_code(db, campaign_id, current_user):
+    check_organizer_campaign(db, campaign_id, current_user)
+    campaign = get_campaign(db, campaign_id)
+    if not campaign.attendance_code:
+        return None
+    return {"code": campaign.attendance_code,
+            "code_type": campaign.attendance_code_type,
+            "expires_at": campaign.attendance_code_expires_at,
+            "is_active": campaign.attendance_code_expires_at is not None and
+                now_vietnam() < campaign.attendance_code_expires_at and
+                campaign.status in ("OPEN", "CLOSED")}

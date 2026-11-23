@@ -3,14 +3,17 @@ from decimal import Decimal, ROUND_HALF_UP
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
+from app.services.notifications import create_notification, notify_campaign_organizer, notify_active_admins
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.hourclaims import HourClaimModel
 from app.models.registration import RegistrationModel
 from app.models.attendances import AttendanceModel
 from app.models.campaigns import CampaignModel
+from app.models.certificate import CertificateModel
 from app.models.organizations import OrganizationModel
-from app.services.certificates import issue_certificate 
+from app.schemas.certificates import IssueCertificate
+from app.services.certificates import issue_certificate
 
 from app.schemas.hourclaims import (
     HourClaimCreate,
@@ -236,6 +239,9 @@ def create_hour_claim(
         )
 
         db.add(claim)
+        notify_campaign_organizer(db, registration.campaign_id, "Có yêu cầu xác minh giờ",
+                                  f'Yêu cầu xác minh giờ mới cho chiến dịch #{registration.campaign_id}.',
+                                  "organizer-dashboard.html?tab=certificates")
         db.commit()
         db.refresh(claim)
 
@@ -467,20 +473,26 @@ def review_hour_claim(
             )
 
         claim.updated_at = now
+        create_notification(db, claim.user_id, "Yêu cầu xác minh giờ đã xử lý",
+                            f'Yêu cầu #{claim.id}: {claim.status}.',
+                            "user-dashboard.html?tab=certificates")
+
+        # Tự động cấp chứng nhận trong cùng transaction sau khi xác minh thành công
+        if claim.status == "VERIFIED":
+            db.flush()
+            issue_certificate(
+                db=db,
+                payload=IssueCertificate(
+                    campaign_id=registration.campaign_id,
+                    user_id=claim.user_id,
+                    total_hours=claim.approved_hours,
+                ),
+                owner_id=current_user.id,
+                commit=False,
+            )
 
         db.commit()
         db.refresh(claim)
-
-       # Tự động cấp chứng nhận sau khi xác minh thành công
-        if claim.status == "VERIFIED":
-
-            issue_certificate(
-                db=db,
-                user_id=claim.user_id,
-                campaign_id=registration.campaign_id,
-                verified_hours=claim.approved_hours
-    )
-
         return claim
 
     except Exception:
@@ -517,10 +529,16 @@ def create_hour_claim_appeal(
                 detail="Bạn không có quyền khiếu nại yêu cầu này"
             )
 
-        if claim.status != "REJECTED":
+        is_rejected = claim.status == "REJECTED"
+        is_under_approved = (
+            claim.status == "VERIFIED"
+            and claim.approved_hours is not None
+            and claim.approved_hours < claim.claimed_hours
+        )
+        if not (is_rejected or is_under_approved):
             raise HTTPException(
                 status_code=400,
-                detail="Chỉ được khiếu nại yêu cầu đã bị từ chối"
+                detail="Chỉ được khiếu nại yêu cầu bị từ chối hoặc được duyệt ít hơn số giờ đề nghị"
             )
 
         if claim.appeal_status is not None:
@@ -543,6 +561,9 @@ def create_hour_claim_appeal(
 
         claim.appeal_status = "PENDING"
         claim.updated_at = now_vietnam()
+        notify_active_admins(db, "Có khiếu nại giờ đóng góp",
+                             f'Có khiếu nại mới cho yêu cầu giờ #{claim.id}.',
+                             "admin-dashboard.html?tab=appeals")
 
         db.commit()
         db.refresh(claim)
@@ -601,14 +622,29 @@ def review_hour_claim_appeal(
             ).first()
             if duplicate:
                 raise HTTPException(409, "Đã tồn tại yêu cầu được xác minh cho đăng ký này")
+            campaign = db.query(CampaignModel).filter(
+                CampaignModel.id == registration.campaign_id
+            ).first()
+            if campaign is None:
+                raise HTTPException(404, "Không tìm thấy chiến dịch")
+            campaign_seconds = max(0.0, (campaign.end_time - campaign.start_time).total_seconds())
+            campaign_max_hours = (
+                Decimal(str(campaign_seconds)) / Decimal("3600")
+            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             actual_hours = verified_attendance_hours(db, claim.registration_id)
+            max_allowed_hours = min(actual_hours, campaign_max_hours)
             approved_hours = (
                 data.approved_hours
                 if data.approved_hours is not None
-                else min(claim.claimed_hours, actual_hours)
+                else min(claim.claimed_hours, max_allowed_hours)
             )
             if approved_hours > actual_hours:
-                raise HTTPException(422, "Giờ duyệt vượt quá giờ điểm danh hợp lệ")
+                raise HTTPException(
+                    422,
+                    "Giờ duyệt vượt quá giờ điểm danh hợp lệ; nếu thiếu điểm danh hãy xử lý khiếu nại điểm danh trước",
+                )
+            if approved_hours > campaign_max_hours:
+                raise HTTPException(422, "Giờ duyệt vượt quá thời lượng tối đa của chiến dịch")
 
             if approved_hours <= 0:
                 raise HTTPException(
@@ -631,8 +667,9 @@ def review_hour_claim_appeal(
 
             claim.appeal_status = "REJECTED"
 
-            # Giữ nguyên trạng thái REJECTED của yêu cầu
-            claim.status = "REJECTED"
+            # Chỉ chuyển về REJECTED nếu trước đó claim chưa được VERIFIED
+            if claim.status != "VERIFIED":
+                claim.status = "REJECTED"
 
         else:
             raise HTTPException(
@@ -650,17 +687,56 @@ def review_hour_claim_appeal(
 
         claim.resolved_at = now
         claim.updated_at = now
+        create_notification(db, claim.user_id, "Khiếu nại giờ đã được xử lý",
+                            f'Khiếu nại yêu cầu #{claim.id}: {claim.appeal_status}.',
+                            "user-dashboard.html?tab=certificates")
+
+        if claim.appeal_status == "ACCEPTED" and claim.status == "VERIFIED":
+            existing_cert = (
+                db.query(CertificateModel)
+                .filter(
+                    CertificateModel.campaign_id == registration.campaign_id,
+                    CertificateModel.user_id == claim.user_id,
+                )
+                .with_for_update()
+                .first()
+            )
+            if existing_cert is not None:
+                if existing_cert.status == "REVOKED":
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Chứng chỉ của chiến dịch này đã bị thu hồi; không thể tự động cập nhật.",
+                    )
+                existing_cert.total_hours = claim.approved_hours
+                create_notification(
+                    db=db,
+                    user_id=claim.user_id,
+                    title="Chứng nhận đã được cập nhật giờ",
+                    content=f'Chứng nhận {existing_cert.certificate_code} đã được cập nhật thành {claim.approved_hours} giờ.',
+                    link=f"user-dashboard.html?tab=certificates&certificate={existing_cert.certificate_code}",
+                )
+            else:
+                org_owner_id = (
+                    db.query(OrganizationModel.owner_id)
+                    .join(CampaignModel, CampaignModel.organization_id == OrganizationModel.id)
+                    .filter(CampaignModel.id == registration.campaign_id)
+                    .scalar()
+                )
+                if org_owner_id is not None:
+                    db.flush()
+                    issue_certificate(
+                        db=db,
+                        payload=IssueCertificate(
+                            campaign_id=registration.campaign_id,
+                            user_id=claim.user_id,
+                            total_hours=claim.approved_hours,
+                        ),
+                        owner_id=org_owner_id,
+                        commit=False,
+                    )
 
         db.commit()
         db.refresh(claim)
-        if claim.appeal_status == "ACCEPTED" and claim.status == "VERIFIED":
-
-            issue_certificate(
-                db=db,
-                user_id=claim.user_id,
-                campaign_id=registration.campaign_id,
-                verified_hours=claim.approved_hours
-            )
         return claim
 
     except Exception:

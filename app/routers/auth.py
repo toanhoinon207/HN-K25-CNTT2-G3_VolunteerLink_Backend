@@ -6,8 +6,21 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.users import UserModel
 from app.schemas.users import UserCreate, UserResponse
-from app.schemas.auth import LoginRequest, TokenResponse, RefreshTokenRequest
-from app.services.auth import register_user, login_user, refresh_user_token, logout_user
+from app.schemas.auth import (
+    ForgotPasswordRequest,
+    LoginRequest,
+    RefreshTokenRequest,
+    ResetPasswordRequest,
+    TokenResponse,
+)
+from app.services.auth import (
+    login_user,
+    logout_user,
+    refresh_user_token,
+    register_user,
+    request_password_reset,
+    reset_password_with_token,
+)
 from app.dependencies.auth import get_current_user
 
 
@@ -48,3 +61,13 @@ def logout(
     db: Session = Depends(get_db)
 ):
     return logout_user(db, credentials.credentials, current_user)
+
+
+@router.post("/forgot-password")
+def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    return request_password_reset(db, str(data.email))
+
+
+@router.post("/reset-password")
+def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
+    return reset_password_with_token(db, data.token, data.new_password)

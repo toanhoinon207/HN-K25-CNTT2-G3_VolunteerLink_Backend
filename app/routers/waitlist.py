@@ -8,6 +8,7 @@ from app.models.registration import RegistrationModel
 from app.models.users import UserModel
 from app.models.waitlist_entry import WaitlistEntryModel
 from app.schemas.waitlist_entry import WaitlistEntryResponse, WaitlistResponseRequest
+from app.services.notifications import notify_campaign_organizer
 from app.services.waitlist import (
     add_to_waitlist, approved_count, active_invite_count, list_campaign_waitlist,
     process_expired_invites, respond_to_invite, promote_after_vacancy,
@@ -56,6 +57,8 @@ def join_waitlist(
     current_user: UserModel = Depends(require_role("USER")),
 ):
     process_expired_invites(db)
+    # Khóa theo thứ tự thống nhất: User -> Campaign để tránh deadlock và race condition.
+    db.query(UserModel).filter_by(id=current_user.id).with_for_update().first()
     campaign = db.query(CampaignModel).filter_by(id=campaign_id).with_for_update().first()
     if campaign is None:
         raise HTTPException(404, "Không tìm thấy chiến dịch")
@@ -68,21 +71,40 @@ def join_waitlist(
         raise HTTPException(409, "Chiến dịch vẫn còn chỗ; hãy đăng ký theo luồng thông thường")
     registration = db.query(RegistrationModel).filter_by(
         user_id=current_user.id, campaign_id=campaign_id
-    ).first()
-    if registration and registration.status not in ("CANCELLED", "WAITLISTED"):
+    ).with_for_update().first()
+    if registration and registration.status != "CANCELLED":
         raise HTTPException(409, "Bạn đã đăng ký chiến dịch này")
+    conflict = db.query(RegistrationModel.id).join(
+        CampaignModel, RegistrationModel.campaign_id == CampaignModel.id
+    ).filter(
+        RegistrationModel.user_id == current_user.id,
+        RegistrationModel.status == "APPROVED",
+        CampaignModel.start_time < campaign.end_time,
+        CampaignModel.end_time > campaign.start_time,
+    ).first()
+    if conflict:
+        raise HTTPException(409, "Lịch chiến dịch bị trùng với chiến dịch đã được duyệt")
     # Trước khi thêm người mới, ưu tiên gửi lời mời cho người đã chờ.
     if has_queue:
         promote_after_vacancy(db, campaign_id)
     entry = add_to_waitlist(db, current_user.id, campaign_id)
-    if registration is None or registration.status == "CANCELLED":
-        if registration is None:
-            registration = RegistrationModel(
-                user_id=current_user.id, campaign_id=campaign_id, status="WAITLISTED"
-            )
-            db.add(registration)
-        else:
-            registration.status = "WAITLISTED"
+    now = now_vietnam()
+    if registration is None:
+        registration = RegistrationModel(
+            user_id=current_user.id, campaign_id=campaign_id, status="WAITLISTED"
+        )
+        db.add(registration)
+    else:
+        registration.status = "WAITLISTED"
+        registration.rejection_reason = None
+        registration.created_at = now
+    notify_campaign_organizer(
+        db,
+        campaign_id,
+        "Có tình nguyện viên vào danh sách chờ",
+        f'Chiến dịch "{campaign.title}" có đăng ký vào danh sách chờ.',
+        f"organizer-dashboard.html?tab=volunteers&campaign_id={campaign_id}",
+    )
     db.commit()
     db.refresh(entry)
     return entry_details(db, entry)

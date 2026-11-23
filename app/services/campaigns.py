@@ -1,8 +1,10 @@
 
 from datetime import datetime
+from pathlib import Path
+import uuid
 from zoneinfo import ZoneInfo
 
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, or_, and_, case
 
@@ -10,13 +12,14 @@ from app.models.campaigns import CampaignModel, now_vietnam
 from app.models.organizations import OrganizationModel, OrganizationStatus
 from app.models.registration import RegistrationModel
 from app.models.users import UserModel
+from app.models.waitlist_entry import WaitlistEntryModel
 from app.schemas.campaigns import (
     CampaignCancelRequest,
     CampaignCreate,
     CampaignReviewRequest,
     CampaignUpdate,
 )
-from app.services.notifications import create_notification
+from app.services.notifications import create_notification, notify_active_admins
 
 
 def to_naive_vn(dt: datetime) -> datetime:
@@ -239,9 +242,19 @@ def submit_campaign(
     }
 
     validate_campaign(data)
+    if to_naive_vn(campaign.registration_deadline) <= now_vietnam():
+        raise HTTPException(
+            status_code=422,
+            detail="Hạn chót đăng ký phải nằm ở thời điểm tương lai khi gửi duyệt",
+        )
 
     campaign.status = "PENDING"
     campaign.reason = None
+    notify_active_admins(
+        db, "Chiến dịch chờ kiểm duyệt",
+        f'Chiến dịch "{campaign.title}" vừa được gửi duyệt.',
+        "admin-dashboard.html?tab=campaigns",
+    )
 
     db.commit()
     db.refresh(campaign)
@@ -250,19 +263,26 @@ def submit_campaign(
 
 
 def complete_expired_checkout_campaigns(db: Session) -> int:
-    """COMPLETED chỉ khi mã CHECK_OUT cuối cùng hết hạn thực tế.
+    """Đánh dấu COMPLETED khi chiến dịch kết thúc hoặc mã CHECK_OUT hết hạn.
 
-    Không chờ đủ lượt check-out: trường hợp bỏ lỡ xử lý qua khiếu nại.
-    Mã CHECK_IN cũ (NULL type) không được làm chiến dịch hoàn thành.
+    Giữ quy tắc hiện có: mã CHECK_OUT cuối cùng hết hạn sẽ kết thúc
+    chiến dịch. Bổ sung dự phòng theo end_time để các chiến dịch không
+    từng cấp mã CHECK_OUT cũng không bị kẹt ở CLOSED vô thời hạn.
+    Mã CHECK_IN cũ không thể tự kích hoạt việc hoàn thành.
     """
     now = now_vietnam()
     updated = (
         db.query(CampaignModel)
         .filter(
             CampaignModel.status.in_(["OPEN", "CLOSED"]),
-            CampaignModel.attendance_code_type == "CHECK_OUT",
-            CampaignModel.attendance_code_expires_at.isnot(None),
-            CampaignModel.attendance_code_expires_at <= now,
+            or_(
+                CampaignModel.end_time <= now,
+                and_(
+                    CampaignModel.attendance_code_type == "CHECK_OUT",
+                    CampaignModel.attendance_code_expires_at.isnot(None),
+                    CampaignModel.attendance_code_expires_at <= now,
+                ),
+            ),
         )
         .update(
             {CampaignModel.status: "COMPLETED", CampaignModel.updated_at: now},
@@ -275,13 +295,18 @@ def complete_expired_checkout_campaigns(db: Session) -> int:
 
 
 def close_expired_campaigns(db: Session) -> int:
-    """Tự động chuyển các chiến dịch OPEN đã quá hạn đăng ký sang CLOSED."""
+    """Đóng nhận đăng ký, KHÔNG kết thúc hoạt động/khóa điểm danh.
+
+    OPEN -> CLOSED từ registration_deadline; CLOSED vẫn được điểm danh
+    trong [start_time, end_time] theo validate_campaign_time().
+    """
     now = now_vietnam()
     updated = (
         db.query(CampaignModel)
         .filter(
             CampaignModel.status == "OPEN",
             CampaignModel.registration_deadline <= now,
+            CampaignModel.end_time > now,
         )
         .update(
             {
@@ -294,6 +319,13 @@ def close_expired_campaigns(db: Session) -> int:
     if updated:
         db.commit()
     return updated
+
+
+def sync_campaign_lifecycle(db: Session) -> tuple[int, int]:
+    """Cập nhật vòng đời trong một lượt; không ghi đè COMPLETED/CANCELLED."""
+    closed = close_expired_campaigns(db)
+    completed = complete_expired_checkout_campaigns(db)
+    return closed, completed
 
 
 def get_public_campaign_query(db: Session):
@@ -433,6 +465,65 @@ def get_public_campaign_detail(
     return campaign
 
 
+ALLOWED_CAMPAIGN_IMAGE_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+MAX_CAMPAIGN_IMAGE_BYTES = 2 * 1024 * 1024
+CAMPAIGN_UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads" / "campaigns"
+
+
+def upload_campaign_image(file: UploadFile) -> dict:
+    ext = ALLOWED_CAMPAIGN_IMAGE_TYPES.get((file.content_type or "").lower())
+    if not ext:
+        raise HTTPException(
+            status_code=400,
+            detail="Chỉ hỗ trợ định dạng ảnh JPG, PNG hoặc WEBP."
+        )
+    content = file.file.read(MAX_CAMPAIGN_IMAGE_BYTES + 1)
+    if not content:
+        raise HTTPException(status_code=400, detail="File ảnh rỗng.")
+    if len(content) > MAX_CAMPAIGN_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Kích thước ảnh tối đa là 2MB.")
+    is_valid_image = (
+        (ext == ".jpg" and content.startswith(b"\xff\xd8\xff"))
+        or (ext == ".png" and content.startswith(b"\x89PNG\r\n\x1a\n"))
+        or (ext == ".webp" and len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP")
+    )
+    if not is_valid_image:
+        raise HTTPException(
+            status_code=400,
+            detail="Nội dung file không khớp định dạng ảnh JPG, PNG hoặc WEBP."
+        )
+    CAMPAIGN_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"campaign_{uuid.uuid4().hex}{ext}"
+    (CAMPAIGN_UPLOAD_DIR / filename).write_bytes(content)
+    return {"image_url": f"/uploads/campaigns/{filename}"}
+
+
+def get_admin_campaign_detail(db: Session, campaign_id: int):
+    campaign = (
+        db.query(CampaignModel)
+        .options(joinedload(CampaignModel.organization))
+        .filter(CampaignModel.id == campaign_id)
+        .first()
+    )
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy chiến dịch")
+    approved_count = (
+        db.query(func.count(RegistrationModel.id))
+        .filter(
+            RegistrationModel.campaign_id == campaign_id,
+            RegistrationModel.status == "APPROVED",
+        )
+        .scalar()
+    ) or 0
+    campaign.approved_count = approved_count
+    campaign.remaining_slots = max(campaign.max_participants - approved_count, 0)
+    return campaign
+
+
 def get_featured_campaigns(db: Session, limit: int = 3):
     close_expired_campaigns(db)
     now = datetime.now(
@@ -504,6 +595,7 @@ def review_campaign(
         db.query(CampaignModel)
         .options(joinedload(CampaignModel.organization))
         .filter(CampaignModel.id == campaign_id)
+        .with_for_update()
         .first()
     )
 
@@ -566,6 +658,7 @@ def cancel_campaign(
     campaign = (
         db.query(CampaignModel)
         .filter(CampaignModel.id == campaign_id)
+        .with_for_update()
         .first()
     )
     if not campaign:
@@ -597,7 +690,7 @@ def cancel_campaign(
         db.query(RegistrationModel)
         .filter(
             RegistrationModel.campaign_id == campaign.id,
-            RegistrationModel.status.in_(["PENDING", "APPROVED"]),
+            RegistrationModel.status.in_(["PENDING", "APPROVED", "WAITLISTED"]),
         )
         .all()
     )
@@ -612,6 +705,59 @@ def cancel_campaign(
             link=f"campaign_detail.html?id={campaign.id}",
         )
 
+    db.query(WaitlistEntryModel).filter(
+        WaitlistEntryModel.campaign_id == campaign.id,
+        WaitlistEntryModel.status.in_(["WAITING", "INVITED"]),
+    ).update({WaitlistEntryModel.status: "EXPIRED"}, synchronize_session=False)
+
     db.commit()
     db.refresh(campaign)
     return campaign
+
+
+def complete_campaign_by_organizer(
+    db: Session,
+    campaign_id: int,
+    current_user: UserModel,
+):
+    organization = get_approved_organization(db, current_user.id)
+    campaign = (
+        db.query(CampaignModel)
+        .filter(CampaignModel.id == campaign_id)
+        .with_for_update()
+        .first()
+    )
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Không tìm thấy chiến dịch")
+    if campaign.organization_id != organization.id:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền hoàn thành chiến dịch này")
+    if campaign.status not in ("OPEN", "CLOSED"):
+        raise HTTPException(
+            status_code=409,
+            detail="Chỉ có thể hoàn thành chiến dịch đang ở trạng thái OPEN hoặc CLOSED",
+        )
+    now = now_vietnam()
+    if campaign.start_time and now < campaign.start_time:
+        raise HTTPException(
+            status_code=409,
+            detail="Không thể hoàn thành chiến dịch chưa bắt đầu diễn ra",
+        )
+    campaign.status = "COMPLETED"
+    campaign.updated_at = now
+    db.commit()
+    db.refresh(campaign)
+    return campaign
+
+
+def derive_display_status(status, start_time, end_time, registration_deadline, now=None):
+    """Presentation-only status; do not use for authorization."""
+    now = now or now_vietnam()
+    if status in ("DRAFT", "PENDING", "CANCELLED", "COMPLETED"):
+        return status
+    if now >= end_time:
+        return "COMPLETED"
+    if now >= start_time:
+        return "IN_PROGRESS"
+    if now >= registration_deadline or status == "CLOSED":
+        return "REGISTRATION_CLOSED"
+    return "REGISTRATION_OPEN"

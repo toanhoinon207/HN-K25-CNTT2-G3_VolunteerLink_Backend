@@ -8,12 +8,17 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.dependencies.auth import require_role
+from app.models.auth_sessions import AuthSessionModel, now_utc
 from app.models.campaigns import CampaignModel
 from app.models.certificate import CertificateModel
+from app.models.organizations import OrganizationModel, OrganizationStatus
+from app.models.user_moderation import UserModerationHistoryModel
 from app.models.users import UserModel
 from app.schemas.users import UserResponse
 from app.services.certificates import revoke_certificate as revoke_certificate_service
 from app.services.admin_dashboard import AdminDashboardService
+from app.services.notifications import create_notification
+from app.services.user_moderation import lock_user_service, unlock_user_service
 
 router = APIRouter(prefix="/admin", tags=["Admin Management"])
 
@@ -73,8 +78,27 @@ def update_user_status(
             detail="Không tìm thấy người dùng.",
         )
 
-    user.status = payload.status
-    db.commit()
+    if user.role == "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Không thể thay đổi trạng thái khóa của Quản trị viên khác.",
+        )
+
+    if payload.status == "LOCKED":
+        if user.status != "LOCKED":
+            lock_user_service(
+                db=db,
+                user_id=user.id,
+                reason="Khóa tài khoản bởi Quản trị viên",
+                admin=current_user,
+            )
+    elif user.status == "LOCKED":
+        unlock_user_service(
+            db=db,
+            user_id=user.id,
+            reason="Mở khóa tài khoản bởi Quản trị viên",
+            admin=current_user,
+        )
     db.refresh(user)
     return user
 
@@ -100,7 +124,40 @@ def update_user_role(
             detail="Không tìm thấy người dùng.",
         )
 
-    user.role = payload.role
+    if user.role == "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Không thể thay đổi vai trò của Quản trị viên khác.",
+        )
+
+    if payload.role == "ORGANIZER" and user.role != "ORGANIZER":
+        approved_org = (
+            db.query(OrganizationModel)
+            .filter(
+                OrganizationModel.owner_id == user.id,
+                OrganizationModel.status == OrganizationStatus.APPROVED,
+            )
+            .first()
+        )
+        if approved_org is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Không thể gán vai trò ORGANIZER khi tài khoản chưa có hồ sơ tổ chức được phê duyệt.",
+            )
+
+    if user.role != payload.role:
+        user.role = payload.role
+        db.query(AuthSessionModel).filter(
+            AuthSessionModel.user_id == user.id,
+            AuthSessionModel.revoked_at.is_(None),
+        ).update({AuthSessionModel.revoked_at: now_utc()}, synchronize_session=False)
+        create_notification(
+            db=db,
+            user_id=user.id,
+            title="Vai trò tài khoản đã được cập nhật",
+            content=f"Vai trò tài khoản của bạn đã được Quản trị viên cập nhật thành {payload.role}.",
+            link=None,
+        )
     db.commit()
     db.refresh(user)
     return user
