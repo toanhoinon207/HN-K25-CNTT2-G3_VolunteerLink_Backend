@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from zoneinfo import ZoneInfo
 
@@ -308,19 +308,54 @@ def get_hour_claims(
     claims = (
         query.options(
             joinedload(HourClaimModel.user),
-            joinedload(HourClaimModel.registration).joinedload(RegistrationModel.campaign),
+            joinedload(HourClaimModel.registration)
+            .joinedload(RegistrationModel.campaign)
+            .joinedload(CampaignModel.organization),
         )
         .order_by(HourClaimModel.created_at.desc())
         .all()
     )
-    for c in claims:
-        setattr(c, "user_name", c.user.full_name if c.user else None)
-        setattr(
-            c,
-            "campaign_title",
-            c.registration.campaign.title if c.registration and c.registration.campaign else None,
+    reg_ids = [c.registration_id for c in claims if c.registration_id]
+    att_map = {}
+    if reg_ids:
+        att_rows = (
+            db.query(AttendanceModel)
+            .filter(AttendanceModel.registration_id.in_(reg_ids))
+            .all()
         )
+        att_map = {a.registration_id: a for a in att_rows}
+
+    for c in claims:
+        _attach_hour_claim_comparison_fields(c, att_map.get(c.registration_id))
     return claims
+
+
+def _attach_hour_claim_comparison_fields(c: HourClaimModel, att: AttendanceModel | None = None):
+    user = c.user
+    reg = c.registration
+    camp = reg.campaign if reg else None
+    org = camp.organization if camp else None
+
+    setattr(c, "user_name", user.full_name if user else None)
+    setattr(c, "user_email", user.email if user else None)
+    setattr(c, "campaign_id", camp.id if camp else (reg.campaign_id if reg else None))
+    setattr(c, "campaign_title", camp.title if camp else None)
+    setattr(c, "organization_name", org.name if org else None)
+    setattr(c, "campaign_start_time", camp.start_time if camp else None)
+    setattr(c, "campaign_end_time", camp.end_time if camp else None)
+    setattr(c, "campaign_estimated_hours", float(camp.estimated_hours) if camp and camp.estimated_hours is not None else None)
+
+    setattr(c, "attendance_status", att.status if att else None)
+    setattr(c, "attendance_check_in_at", att.check_in_at if att else None)
+    setattr(c, "attendance_check_out_at", att.check_out_at if att else None)
+    setattr(c, "attendance_total_minutes", att.total_minutes if att else None)
+
+    base_appeal_time = c.updated_at or c.created_at
+    setattr(
+        c,
+        "sla_deadline",
+        (base_appeal_time + timedelta(hours=48)) if (c.appeal_status and base_appeal_time) else None,
+    )
 
 
 # =====================================================
@@ -337,7 +372,9 @@ def get_hour_claim_detail(
         db.query(HourClaimModel)
         .options(
             joinedload(HourClaimModel.user),
-            joinedload(HourClaimModel.registration).joinedload(RegistrationModel.campaign),
+            joinedload(HourClaimModel.registration)
+            .joinedload(RegistrationModel.campaign)
+            .joinedload(CampaignModel.organization),
         )
         .filter(HourClaimModel.id == claim_id)
         .first()
@@ -354,12 +391,12 @@ def get_hour_claim_detail(
         current_user
     )
 
-    setattr(claim, "user_name", claim.user.full_name if claim.user else None)
-    setattr(
-        claim,
-        "campaign_title",
-        claim.registration.campaign.title if claim.registration and claim.registration.campaign else None,
+    att = (
+        db.query(AttendanceModel)
+        .filter(AttendanceModel.registration_id == claim.registration_id)
+        .first()
     )
+    _attach_hour_claim_comparison_fields(claim, att)
     return claim
 
 
@@ -561,9 +598,19 @@ def create_hour_claim_appeal(
 
         claim.appeal_status = "PENDING"
         claim.updated_at = now_vietnam()
-        notify_active_admins(db, "Có khiếu nại giờ đóng góp",
-                             f'Có khiếu nại mới cho yêu cầu giờ #{claim.id}.',
-                             "admin-dashboard.html?tab=appeals")
+        notify_active_admins(
+            db,
+            "Có khiếu nại giờ đóng góp (Hạn xử lý 48 giờ)",
+            f"Có khiếu nại mới cho yêu cầu giờ #{claim.id}. Mọi khiếu nại gửi lên Admin cần được đối chiếu và xử lý trong vòng 48 giờ.",
+            "admin-dashboard.html?tab=appeals",
+        )
+        create_notification(
+            db,
+            claim.user_id,
+            "Đã tiếp nhận khiếu nại giờ lên Admin",
+            f"Khiếu nại cho yêu cầu giờ #{claim.id} đã được chuyển lên Quản trị viên và sẽ được xử lý trong vòng 48 giờ.",
+            "user-dashboard.html?tab=certificates",
+        )
 
         db.commit()
         db.refresh(claim)

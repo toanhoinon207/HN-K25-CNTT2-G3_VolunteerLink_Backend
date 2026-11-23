@@ -1,61 +1,70 @@
-# Backend base: Python FastAPI + MySQL
+# VolunteerLink — Backend API (FastAPI + MySQL)
 
-Khung backend chung cho các nhóm thực tập lớp **HN-KS25-CNTT1**. Đã có sẵn:
+Hệ thống API cho nền tảng **VolunteerLink** (Cổng kết nối Tình nguyện viên & Hoạt động xã hội), xây dựng bằng **FastAPI**, **SQLAlchemy**, **PyMySQL** và **MySQL 8**.
 
-- Kết nối **MySQL** bằng SQLAlchemy + PyMySQL, cấu hình đọc từ file `.env`
-- **CRUD mẫu** cho bảng `items` (thêm / xem / sửa / xoá / tìm kiếm)
-- Endpoint **health-check** `GET /api/health` kiểm tra kết nối DB
-- **CORS** đã bật để frontend gọi được
-- File `sql/init.sql` tạo database + bảng + dữ liệu mẫu, chạy bằng **MySQL Workbench**
-- Trang tài liệu API tự sinh: http://127.0.0.1:8000/docs
+---
 
-## 1. Cần cài trước
+## 1. Tính năng chính
+
+- **Xác thực & phân quyền JWT (`USER`, `ORGANIZER`, `ADMIN`)**: Đăng ký, đăng nhập, làm mới token (`refresh`), đăng xuất (`auth_sessions`), quên/đặt lại mật khẩu qua email (SMTP).
+- **Hồ sơ cá nhân & Tình nguyện viên**: Cập nhật thông tin cá nhân, kỹ năng, khu vực, đổi mật khẩu, tải lên ảnh đại diện (`/uploads/avatars`).
+- **Tổ chức (`Organizations`)**: Đăng ký hồ sơ tổ chức kèm tài liệu pháp lý; Admin xét duyệt (`APPROVED` / `REJECTED`) và tự động nâng quyền tài khoản thành `ORGANIZER`.
+- **Chiến dịch (`Campaigns`)**: Tạo bản nháp (`DRAFT`), tải ảnh chiến dịch (`/uploads/campaigns`), gửi duyệt (`PENDING`), Admin phê duyệt mở tuyển (`OPEN`), đồng bộ vòng đời chiến dịch tự động theo thời gian.
+- **Đăng ký & Hàng chờ (`Registrations` & `Waitlist`)**: Đăng ký tham gia, hủy đăng ký, duyệt/từ chối đơn, tự động mời từ danh sách chờ và hết hạn lời mời sau 24 giờ.
+- **Điểm danh & Khiếu nại (`Attendances` & `Attendance Appeals`)**: Phát mã điểm danh, check-in / check-out theo mã, khiếu nại điểm danh lên Tổ chức hoặc leo thang lên Admin.
+- **Xác nhận giờ & Chứng chỉ (`Hour Claims` & `Certificates`)**: Khiếu nại/xác nhận giờ tình nguyện phát sinh, cấp chứng chỉ điện tử, tra cứu xác thực công khai theo mã chứng chỉ và thu hồi chứng chỉ (Admin).
+- **Thông báo & Quản trị (`Notifications`, `Admin`, `User Moderation`)**: Thông báo người dùng, thống kê hệ thống, khóa/mở khóa tài khoản kèm lịch sử kiểm duyệt.
+- **Tài liệu API tự động (Swagger UI)**: `http://127.0.0.1:8000/docs`.
+
+---
+
+## 2. Yêu cầu môi trường
 
 | Phần mềm | Ghi chú |
 |---|---|
-| Python **3.10 trở lên** | https://www.python.org/downloads/ (Windows: tick **Add python.exe to PATH** khi cài) |
-| MySQL Server 8 + MySQL Workbench | Bản các bạn đang dùng trên lớp là được |
+| Python **3.10 trở lên** | Khuyến nghị 3.10–3.12 (Windows: tick **Add python.exe to PATH** khi cài) |
+| MySQL Server 8 + MySQL Workbench | Hỗ trợ `utf8mb4` để lưu tiếng Việt chuẩn |
 
-Kiểm tra Python: mở terminal gõ `python --version` (Mac: `python3 --version`).
+---
 
-## 2. Cấu trúc thư mục
+## 3. Cấu trúc thư mục
 
-```
-backend/
+```text
+HN-K25-CNTT2-G3_VolunteerLink_Backend/
 ├── app/
-│   ├── main.py            # Điểm khởi động: tạo app, bật CORS, gắn các router
-│   ├── core/config.py     # Đọc cấu hình từ .env
-│   ├── db/session.py      # Kết nối MySQL, hàm get_db()
-│   ├── models/            # Model = bảng trong DB (item.py)
-│   ├── schemas/           # Schema = dữ liệu vào/ra của API (item.py)
-│   ├── crud/              # Hàm đọc/ghi DB (item.py)
-│   └── routers/           # Khai báo các API (health.py, items.py)
-├── sql/init.sql           # Tạo database + bảng + dữ liệu mẫu (chạy bằng Workbench)
-├── requirements.txt       # Danh sách thư viện Python
-├── .env.example           # Mẫu file cấu hình
-└── docker-compose.yml     # KHÔNG bắt buộc, xem mục 8
+│   ├── main.py                  # Khởi tạo FastAPI, lifespan (DB/seed/background task), CORS, mount /uploads, gắn routers
+│   ├── core/
+│   │   ├── config.py            # Đọc cấu hình từ .env (DB, JWT, CORS, SMTP, AUTO_SEED_ON_STARTUP)
+│   │   └── security.py          # Hash mật khẩu (bcrypt) & tạo/giải mã JWT
+│   ├── db/
+│   │   ├── session.py           # Kết nối MySQL (SQLAlchemy Engine, Base, SessionLocal, get_db)
+│   │   └── seed.py              # Tự động nạp sql/seed_all.sql khi bảng users còn trống
+│   ├── dependencies/
+│   │   └── auth.py              # Dependency lấy current_user và kiểm tra vai trò
+│   ├── models/                  # SQLAlchemy ORM models (users, organizations, campaigns, registrations, ...)
+│   ├── schemas/                 # Pydantic schemas kiểm tra dữ liệu vào/ra
+│   ├── services/                # Tầng xử lý nghiệp vụ & tác vụ đồng bộ nền
+│   └── routers/                 # Định nghĩa các endpoint API (/api/...)
+├── sql/
+│   ├── init.sql                 # Tạo database volunteerlink_db (utf8mb4)
+│   ├── seed_all.sql             # Dữ liệu mẫu đầy đủ (users, organizations, campaigns, registrations, ...)
+│   └── *.sql                    # Các script migration bổ sung theo từng module
+├── uploads/                     # Thư mục lưu file upload (avatars/, campaigns/), tự tạo nếu chưa có
+├── requirements.txt             # Danh sách thư viện Python
+└── .env.example                 # Mẫu file cấu hình môi trường
 ```
 
-Một request đi qua các lớp như sau:
+---
 
-```
-Frontend --HTTP--> routers/items.py --> crud/item.py --> models/item.py --> MySQL
-                   (kiểm tra dữ liệu bằng schemas/item.py)
-```
+## 4. Cài đặt & Chạy server
 
-## 3. Bước 1: tạo database bằng MySQL Workbench
+### Bước 1: Tạo database MySQL
+1. Mở **MySQL Workbench** và kết nối tới MySQL Server (ví dụ `127.0.0.1:3306`).
+2. Chạy file `sql/init.sql` (**File → Open SQL Script...** → chọn `sql/init.sql` → bấm **Execute ⚡**) để tạo database `volunteerlink_db` với charset `utf8mb4`.
+   > Nếu cần nạp thủ công dữ liệu mẫu, có thể mở và chạy thêm `sql/seed_all.sql`; mặc định backend sẽ tự chạy file này ở lần khởi động đầu tiên khi bảng `users` chưa có dữ liệu (`AUTO_SEED_ON_STARTUP=true`).
 
-1. Mở **MySQL Workbench**, bấm vào connection **Local instance MySQL80** (hoặc connection bạn hay dùng), nhập mật khẩu root.
-2. Menu **File → Open SQL Script...**, chọn file `backend/sql/init.sql`.
-3. Bấm nút **tia sét ⚡ (Execute)** để chạy cả file.
-4. Ở khung **SCHEMAS** bên trái, bấm nút **Refresh ⟳**. Thấy `app_db` → `Tables` → `items` là xong.
-5. Chuột phải bảng `items` → **Select Rows - Limit 1000** để xem 2 dòng dữ liệu mẫu.
-
-> Nhớ lại thông tin connection (chuột phải connection ở màn hình Home → **Edit Connection**): **Hostname** (thường `127.0.0.1`), **Port** (thường `3306`), **Username** (thường `root`) và mật khẩu. Bước sau sẽ điền đúng các thông tin này.
-
-## 4. Bước 2: tạo file `.env`
-
-Mở terminal **trong thư mục `backend/`** (VS Code: chuột phải thư mục `backend` → *Open in Integrated Terminal*).
+### Bước 2: Tạo file cấu hình `.env`
+Mở terminal tại thư mục gốc backend:
 
 ```bash
 # Windows
@@ -64,102 +73,114 @@ copy .env.example .env
 cp .env.example .env
 ```
 
-Mở file `.env`, điền **mật khẩu root MySQL** của bạn:
+Mở `.env` và cập nhật thông tin phù hợp với máy của bạn:
 
-```
+```env
+APP_NAME=Volunteer Link
+
+# MySQL
 DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_USER=root
-DB_PASSWORD=mat_khau_root_cua_ban
-DB_NAME=app_db
+DB_PASSWORD=mat_khau_mysql_cua_ban
+DB_NAME=volunteerlink_db
+
+# JWT
+JWT_SECRET_KEY=thay_bang_chuoi_bi_mat_cua_ban
+JWT_ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=60
+REFRESH_TOKEN_EXPIRE_DAYS=7
+
+# CORS (nhiều origin cách nhau bằng dấu phẩy, hoặc "*" khi dev)
+CORS_ORIGINS=*
+
+# SMTP (tùy chọn - dùng cho tính năng quên mật khẩu qua email)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASSWORD=
+SMTP_FROM=
+SMTP_USE_TLS=true
+FRONTEND_BASE_URL=http://127.0.0.1:5500
+PASSWORD_RESET_EXPIRE_MINUTES=15
 ```
 
-## 5. Bước 3: cài thư viện Python
-
-Tạo môi trường ảo (chỉ làm 1 lần):
+### Bước 3: Tạo môi trường ảo & cài thư viện
 
 ```bash
 python -m venv .venv
 ```
 
-Kích hoạt môi trường ảo (làm lại **mỗi lần mở terminal mới**):
+Kích hoạt môi trường ảo:
+- **Windows PowerShell:** `.venv\Scripts\Activate.ps1`
+- **Windows CMD:** `.venv\Scripts\activate.bat`
+- **Mac / Linux:** `source .venv/bin/activate`
 
-| Hệ điều hành | Lệnh |
-|---|---|
-| Windows PowerShell | `.venv\Scripts\Activate.ps1` |
-| Windows CMD | `.venv\Scripts\activate.bat` |
-| Mac / Linux | `source .venv/bin/activate` |
-
-> PowerShell báo lỗi "running scripts is disabled"? Chạy một lần:
-> `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
-
-Khi đầu dòng terminal hiện `(.venv)` là đã kích hoạt. Cài thư viện:
+Cài đặt dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## 6. Bước 4: chạy server
+### Bước 4: Khởi chạy Backend
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-Terminal in ra `[DB] Đã kết nối MySQL ...` là thành công. `--reload` giúp server tự khởi động lại mỗi khi bạn lưu code. Tắt server: `Ctrl + C`.
+Khi khởi động thành công, terminal sẽ hiển thị:
+- `[DB] Đã kết nối MySQL 127.0.0.1:3306/volunteerlink_db`
+- `[SEED] Đã nạp dữ liệu mẫu từ sql/seed_all.sql thành công.` (nếu bảng `users` đang trống)
 
-Kiểm tra:
+Kiểm tra nhanh:
+- Health check: `http://127.0.0.1:8000/api/health`
+- Swagger UI: `http://127.0.0.1:8000/docs`
 
-- http://127.0.0.1:8000/api/health → `{"status":"ok","database":"connected"}`
-- http://127.0.0.1:8000/docs → thử trực tiếp mọi API bằng nút **Try it out**
-- Thêm 1 item ở `/docs` (hoặc từ frontend), rồi quay lại Workbench chạy `SELECT * FROM app_db.items;` sẽ thấy dòng mới.
+---
 
-## 7. Danh sách API mẫu
+## 5. Tài khoản mẫu (từ `sql/seed_all.sql`)
 
-| Method | URL | Việc làm | Body (JSON) |
-|---|---|---|---|
-| GET | `/api/health` | Kiểm tra server + DB | |
-| GET | `/api/items` | Danh sách, tìm theo tên `?q=com` | |
-| GET | `/api/items/{id}` | Chi tiết | |
-| POST | `/api/items` | Thêm mới | `{"name": "Trà đá", "description": "...", "price": 5000}` |
-| PUT | `/api/items/{id}` | Sửa (gửi trường nào sửa trường đó) | `{"price": 6000}` |
-| DELETE | `/api/items/{id}` | Xoá | |
+| Vai trò | Email | Mật khẩu |
+|---|---|---|
+| `ADMIN` | `admin@gmail.com` | `12345678` |
+| `ORGANIZER` | `organizer@gmail.com` | `12345678` |
+| `USER` | `user@gmail.com` | `12345678` |
 
-Khi lỗi, API trả về JSON dạng `{"detail": "..."}`. Ví dụ: 404 khi không tìm thấy, 422 khi dữ liệu gửi lên sai.
+*(Ngoài ra trong `sql/seed_all.sql` còn có thêm các tài khoản `organizer2..5@gmail.com`, `user2..5@gmail.com` và `locked_user@gmail.com` để kiểm thử các trạng thái nghiệp vụ.)*
 
-## 8. Frontend nối với backend thế nào?
+---
 
-- Frontend gọi tới `http://127.0.0.1:8000/api/...` (cấu hình ở `frontend/js/config.js`).
-- Trình duyệt chặn web ở địa chỉ khác gọi API nếu backend không cho phép. Đó là **CORS**. Backend đã cho phép bằng `CORS_ORIGINS` trong `.env`:
-  - `CORS_ORIGINS=*` cho phép mọi nơi (mặc định, tiện khi học)
-  - Khi deploy thật, ghi rõ domain: `CORS_ORIGINS=https://nhom1.example.com`
-- Sửa `.env` xong phải **tắt (`Ctrl + C`) và chạy lại** uvicorn.
+## 6. Tổng hợp nhóm API (`/api`)
 
-## 9. Thêm chức năng cho đề tài (vd: bảng `products`)
+| Nhóm Router | Prefix | Chức năng chính |
+|---|---|---|
+| **Health** | `/api/health` | Kiểm tra trạng thái server & kết nối MySQL |
+| **Auth** | `/api/auth` | Đăng ký, đăng nhập, `/me`, refresh token, đăng xuất, quên/đặt lại mật khẩu |
+| **Profile** | `/api/profile` | Xem/sửa hồ sơ cá nhân, hồ sơ TNV, upload avatar, đổi mật khẩu |
+| **Organizations** | `/api/organizations`, `/api/admin/organizations` | Nộp hồ sơ tổ chức, xem/sửa thông tin tổ chức, thống kê, Admin duyệt tổ chức |
+| **Campaigns** | `/api/campaigns`, `/api/admin/campaigns` | Tạo/sửa/gửi duyệt chiến dịch, upload ảnh, danh sách công khai & chi tiết, Admin kiểm duyệt |
+| **Registrations** | `/api/registrations` | Đăng ký tham gia, hủy đăng ký, xem đơn của tôi/theo chiến dịch, duyệt/từ chối đơn |
+| **Waitlist** | `/api/waitlist` | Tham gia hàng chờ, xem vị trí hàng chờ, phản hồi lời mời tham gia |
+| **Attendances** | `/api/attendances` | Tạo & xem mã điểm danh, check-in / check-out, lịch sử điểm danh |
+| **Attendance Appeals** | `/api/attendance-appeals` | Gửi khiếu nại điểm danh, Tổ chức xét duyệt, leo thang & Admin xử lý |
+| **Hour Claims** | `/api/hour-claims` | Gửi yêu cầu xác nhận giờ phát sinh, Tổ chức/Admin duyệt giờ |
+| **Certificates** | `/api/certificates` | Xem chứng chỉ của tôi, danh sách đủ điều kiện, cấp chứng chỉ, xác thực công khai theo mã |
+| **Notifications** | `/api/notifications` | Lấy danh sách thông báo, số chưa đọc, đánh dấu đã đọc |
+| **Admin & Moderation** | `/api/admin`, `/api/admin/users` | Thống kê dashboard, quản lý user/role/status, khóa/mở khóa tài khoản, thu hồi chứng chỉ |
 
-1. **Tạo bảng trong MySQL:** viết câu `CREATE TABLE products (...)` vào file mới `sql/products.sql`, chạy bằng Workbench như bước 1. Lưu file `.sql` lại để cả nhóm cùng chạy.
-2. `app/models/product.py`: copy `item.py`, đổi tên class, `__tablename__ = "products"` và các cột cho **giống bảng vừa tạo**.
-3. `app/models/__init__.py`: thêm `from app.models.product import Product`.
-4. `app/schemas/product.py`: copy `schemas/item.py`, sửa các trường.
-5. `app/crud/product.py`: copy `crud/item.py`, đổi `Item` thành `Product`.
-6. `app/routers/products.py`: copy `routers/items.py`, đổi `prefix="/products"`.
-7. `app/main.py`: thêm `app.include_router(products.router, prefix="/api")`.
-8. Chạy lại server, mở `/docs` sẽ thấy nhóm API **Products**.
+> Tất cả các endpoint yêu cầu đăng nhập sử dụng header `Authorization: Bearer <access_token>`. Chi tiết request/response xem trực tiếp tại `/docs`.
 
-> Mẹo: nếu quên bước 1, server cũng tự tạo bảng còn thiếu theo model khi khởi động. Nhưng nó **không sửa** bảng đã có. Muốn thêm/sửa cột, hãy dùng `ALTER TABLE ...` trong Workbench rồi sửa model cho khớp.
+---
 
-## 10. Lỗi hay gặp
+## 7. Lưu ý vận hành & Xử lý lỗi thường gặp
 
-| Lỗi | Cách sửa |
+- **Tác vụ nền (Background Task)**: Khi server chạy, `lifespan` trong `app/main.py` chạy tác vụ nền mỗi 30 giây để cập nhật trạng thái vòng đời chiến dịch và hết hạn lời mời waitlist quá 24 giờ.
+- **Static uploads**: Ảnh đại diện và ảnh chiến dịch lưu tại thư mục `uploads/` và phục vụ qua URL `http://127.0.0.1:8000/uploads/...`.
+
+| Lỗi thường gặp | Nguyên nhân & Cách xử lý |
 |---|---|
-| `Access denied for user 'root'@'localhost'` | Sai `DB_PASSWORD` trong `.env`. Dùng đúng mật khẩu đăng nhập Workbench |
-| `Can't connect to MySQL server on '127.0.0.1'` | MySQL chưa bật. Windows: mở **Services**, tìm **MySQL80**, bấm **Start**. Hoặc kiểm tra lại `DB_PORT` |
-| `Unknown database 'app_db'` | Chưa chạy `sql/init.sql` trong Workbench (bước 1) |
-| `ModuleNotFoundError: No module named 'fastapi'` | Chưa kích hoạt `.venv` hoặc chưa `pip install -r requirements.txt` |
-| `Error loading ASGI app. Could not import module "app.main"` | Đang đứng sai thư mục. Phải `cd` vào `backend/` rồi mới chạy uvicorn |
-| `'python' is not recognized...` / mở ra Microsoft Store | Cài lại Python và tick **Add python.exe to PATH** |
-| Cổng 8000 đã bị dùng | `uvicorn app.main:app --reload --port 8001`, nhớ sửa `frontend/js/config.js` theo |
-| Tiếng Việt bị lỗi font trong DB | Database/bảng phải là `utf8mb4`. Tạo bằng `sql/init.sql` là đúng sẵn |
-
-## 11. (Không bắt buộc) Chạy MySQL bằng Docker
-
-Chỉ dành cho bạn nào đã biết Docker và không muốn cài MySQL. Trong `backend/` chạy `docker compose up -d`: MySQL chạy ở cổng **3307**, tự tạo bảng từ `sql/init.sql`. Khi đó sửa `.env` thành `DB_PORT=3307`, `DB_USER=app_user`, `DB_PASSWORD=app_password`.
+| `Unknown database 'volunteerlink_db'` | Chưa chạy `sql/init.sql` trong MySQL Workbench |
+| `Access denied for user 'root'@'localhost'` | Sai `DB_USER` hoặc `DB_PASSWORD` trong file `.env` |
+| `Can't connect to MySQL server on '127.0.0.1'` | Dịch vụ MySQL chưa bật (Windows: mở **Services** → start **MySQL80**) hoặc sai `DB_PORT` |
+| `ModuleNotFoundError: No module named 'fastapi'` | Chưa kích hoạt `.venv` hoặc chưa chạy `pip install -r requirements.txt` |
+| Lỗi CORS khi Frontend gọi API | Kiểm tra `CORS_ORIGINS` trong `.env` (ví dụ `CORS_ORIGINS=*` khi dev) và khởi động lại `uvicorn` |

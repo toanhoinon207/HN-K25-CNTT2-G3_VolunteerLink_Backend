@@ -467,15 +467,25 @@ def get_public_campaign_detail(
 
 ALLOWED_CAMPAIGN_IMAGE_TYPES = {
     "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
+}
+ALLOWED_CAMPAIGN_IMAGE_EXTENSIONS = {
+    ".jpg": ".jpg",
+    ".jpeg": ".jpg",
+    ".png": ".png",
+    ".webp": ".webp",
 }
 MAX_CAMPAIGN_IMAGE_BYTES = 2 * 1024 * 1024
 CAMPAIGN_UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads" / "campaigns"
 
 
 def upload_campaign_image(file: UploadFile) -> dict:
-    ext = ALLOWED_CAMPAIGN_IMAGE_TYPES.get((file.content_type or "").lower())
+    content_type = (file.content_type or "").lower().strip()
+    ext = ALLOWED_CAMPAIGN_IMAGE_TYPES.get(content_type)
+    if not ext and file.filename:
+        ext = ALLOWED_CAMPAIGN_IMAGE_EXTENSIONS.get(Path(file.filename).suffix.lower())
     if not ext:
         raise HTTPException(
             status_code=400,

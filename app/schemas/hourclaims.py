@@ -128,7 +128,18 @@ class HourClaimResponse(BaseModel):
     registration_id: int
     user_id: int
     user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    campaign_id: Optional[int] = None
     campaign_title: Optional[str] = None
+    organization_name: Optional[str] = None
+    campaign_start_time: Optional[datetime] = None
+    campaign_end_time: Optional[datetime] = None
+    campaign_estimated_hours: Optional[float] = None
+
+    attendance_status: Optional[str] = None
+    attendance_check_in_at: Optional[datetime] = None
+    attendance_check_out_at: Optional[datetime] = None
+    attendance_total_minutes: Optional[int] = None
 
     actual_hours: Decimal
     claimed_hours: Decimal
@@ -146,6 +157,7 @@ class HourClaimResponse(BaseModel):
     appeal_reason: Optional[str] = None
     appeal_evidence_url: Optional[str] = None
     appeal_status: Optional[AppealStatus] = None
+    sla_deadline: Optional[datetime] = None
 
     admin_id: Optional[int] = None
     admin_note: Optional[str] = None

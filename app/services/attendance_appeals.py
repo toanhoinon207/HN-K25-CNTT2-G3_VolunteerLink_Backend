@@ -2,7 +2,7 @@
 
 Không tự công nhận giờ: Organizer xác nhận các mốc thời gian rồi TNV tạo hour claim.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -12,6 +12,7 @@ from app.models.registration import RegistrationModel
 from app.models.campaigns import CampaignModel
 from app.models.organizations import OrganizationModel
 from app.models.hourclaims import HourClaimModel
+from app.models.users import UserModel
 from app.services.notifications import create_notification, notify_active_admins, notify_campaign_organizer
 
 
@@ -69,8 +70,67 @@ def create_appeal(db: Session, data, user):
         raise
 
 
+def _enrich_attendance_appeals(db: Session, appeals: list[AttendanceAppealModel]) -> list[AttendanceAppealModel]:
+    if not appeals:
+        return appeals
+    reg_ids = list({a.registration_id for a in appeals if a.registration_id})
+    user_ids = list({a.user_id for a in appeals if a.user_id})
+
+    users_map = {
+        u.id: u
+        for u in db.query(UserModel).filter(UserModel.id.in_(user_ids)).all()
+    } if user_ids else {}
+
+    regs_map = {
+        r.id: r
+        for r in db.query(RegistrationModel).filter(RegistrationModel.id.in_(reg_ids)).all()
+    } if reg_ids else {}
+
+    camp_ids = list({r.campaign_id for r in regs_map.values() if r.campaign_id})
+    camps_map = {
+        c.id: c
+        for c in db.query(CampaignModel).filter(CampaignModel.id.in_(camp_ids)).all()
+    } if camp_ids else {}
+
+    org_ids = list({c.organization_id for c in camps_map.values() if c.organization_id})
+    orgs_map = {
+        o.id: o
+        for o in db.query(OrganizationModel).filter(OrganizationModel.id.in_(org_ids)).all()
+    } if org_ids else {}
+
+    atts_map = {
+        att.registration_id: att
+        for att in db.query(AttendanceModel).filter(AttendanceModel.registration_id.in_(reg_ids)).all()
+    } if reg_ids else {}
+
+    for a in appeals:
+        u = users_map.get(a.user_id)
+        reg = regs_map.get(a.registration_id)
+        camp = camps_map.get(reg.campaign_id) if reg else None
+        org = orgs_map.get(camp.organization_id) if camp else None
+        att = atts_map.get(a.registration_id)
+
+        setattr(a, "user_name", u.full_name if u else None)
+        setattr(a, "user_email", u.email if u else None)
+        setattr(a, "campaign_id", camp.id if camp else (reg.campaign_id if reg else None))
+        setattr(a, "campaign_title", camp.title if camp else None)
+        setattr(a, "organization_name", org.name if org else None)
+        setattr(a, "campaign_start_time", camp.start_time if camp else None)
+        setattr(a, "campaign_end_time", camp.end_time if camp else None)
+        setattr(a, "campaign_estimated_hours", float(camp.estimated_hours) if camp and camp.estimated_hours is not None else None)
+        setattr(a, "current_attendance_status", att.status if att else None)
+        setattr(a, "current_check_in_at", att.check_in_at if att else None)
+        setattr(a, "current_check_out_at", att.check_out_at if att else None)
+        setattr(a, "current_total_minutes", att.total_minutes if att else None)
+        base_time = a.escalated_at or a.created_at
+        setattr(a, "sla_deadline", (base_time + timedelta(hours=48)) if base_time else None)
+
+    return appeals
+
+
 def my_appeals(db: Session, user):
-    return db.query(AttendanceAppealModel).filter(AttendanceAppealModel.user_id == user.id).order_by(AttendanceAppealModel.id.desc()).all()
+    rows = db.query(AttendanceAppealModel).filter(AttendanceAppealModel.user_id == user.id).order_by(AttendanceAppealModel.id.desc()).all()
+    return _enrich_attendance_appeals(db, rows)
 
 
 def organizer_appeals(db: Session, user, campaign_id=None):
@@ -81,7 +141,7 @@ def organizer_appeals(db: Session, user, campaign_id=None):
     ).filter(OrganizationModel.owner_id == user.id)
     if campaign_id is not None:
         q = q.filter(CampaignModel.id == campaign_id)
-    return q.order_by(AttendanceAppealModel.id.desc()).all()
+    return _enrich_attendance_appeals(db, q.order_by(AttendanceAppealModel.id.desc()).all())
 
 
 def _apply_accepted_attendance_appeal(db: Session, appeal: AttendanceAppealModel, reg: RegistrationModel, camp: CampaignModel, data, reviewer_id: int, note_prefix: str, note: str):
@@ -168,12 +228,21 @@ def escalate_appeal(db: Session, appeal_id: int, data, user):
         appeal.escalation_reason = reason
         appeal.escalated_at = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).replace(tzinfo=None)
         notify_active_admins(
-            db, "Có khiếu nại điểm danh chuyển lên Admin",
-            f'Khiếu nại điểm danh #{appeal.id} vừa được chuyển lên Admin xử lý.',
+            db,
+            "Có khiếu nại điểm danh chuyển lên Admin (Hạn xử lý 48 giờ)",
+            f"Khiếu nại điểm danh #{appeal.id} vừa được chuyển lên Admin. Mọi khiếu nại gửi lên Admin cần được đối chiếu và xử lý trong vòng 48 giờ.",
             "admin-dashboard.html?tab=appeals",
+        )
+        create_notification(
+            db,
+            appeal.user_id,
+            "Đã tiếp nhận khiếu nại điểm danh lên Admin",
+            f"Khiếu nại điểm danh #{appeal.id} đã được chuyển lên Quản trị viên và sẽ được xử lý trong vòng 48 giờ.",
+            "user-dashboard.html?tab=attendance",
         )
         db.commit()
         db.refresh(appeal)
+        _enrich_attendance_appeals(db, [appeal])
         return appeal
     except Exception:
         db.rollback()
@@ -186,7 +255,8 @@ def admin_appeals(db: Session, status_filter: str | None = None):
         q = q.filter(AttendanceAppealModel.status == status_filter)
     else:
         q = q.filter(AttendanceAppealModel.status.in_(["ADMIN_PENDING", "ADMIN_ACCEPTED", "ADMIN_REJECTED"]))
-    return q.order_by(AttendanceAppealModel.id.desc()).all()
+    rows = q.order_by(AttendanceAppealModel.id.desc()).all()
+    return _enrich_attendance_appeals(db, rows)
 
 
 def admin_review_appeal(db: Session, appeal_id: int, data, admin):

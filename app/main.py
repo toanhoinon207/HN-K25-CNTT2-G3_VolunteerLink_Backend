@@ -94,6 +94,7 @@ app.add_middleware(
 
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
 (UPLOAD_DIR / "avatars").mkdir(parents=True, exist_ok=True)
+(UPLOAD_DIR / "campaigns").mkdir(parents=True, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 app.include_router(health.router, prefix="/api")
