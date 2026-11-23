@@ -12,32 +12,35 @@ from app.db.session import SessionLocal
 from app.models.campaigns import CampaignModel
 from app.models.registration import RegistrationModel
 from app.models.attendances import AttendanceModel
+from app.models.hourclaims import HourClaimModel
 from app.models.certificate import CertificateModel
 
 
 def seed_certificates(db: Session):
+    # Chỉ cấp chứng chỉ mẫu cho những đơn đã có HourClaim ở trạng thái VERIFIED
     eligible_rows = (
-        db.query(RegistrationModel, AttendanceModel, CampaignModel)
-        .join(AttendanceModel, AttendanceModel.registration_id == RegistrationModel.id)
+        db.query(RegistrationModel, HourClaimModel, CampaignModel)
+        .join(HourClaimModel, HourClaimModel.registration_id == RegistrationModel.id)
         .join(CampaignModel, RegistrationModel.campaign_id == CampaignModel.id)
         .filter(
             RegistrationModel.status == "APPROVED",
             CampaignModel.status == "COMPLETED",
-            AttendanceModel.status == "PRESENT",
+            HourClaimModel.status == "VERIFIED",
+            HourClaimModel.approved_hours > 0,
         )
         .order_by(RegistrationModel.id)
         .all()
     )
 
     if not eligible_rows:
-        print("[!] Không có dữ liệu đủ điều kiện (APPROVED + COMPLETED + PRESENT). Chạy `seed_attendance.py` trước.")
+        print("[!] Không có dữ liệu đủ điều kiện (APPROVED + COMPLETED + VERIFIED HourClaim). Chạy `seed_hour_claim.py` trước.")
         return
 
     now = datetime.now().replace(microsecond=0)
     created = 0
     skipped = 0
 
-    for idx, (reg, att, campaign) in enumerate(eligible_rows):
+    for idx, (reg, claim, campaign) in enumerate(eligible_rows):
         existing = db.query(CertificateModel).filter(
             CertificateModel.user_id == reg.user_id,
             CertificateModel.campaign_id == campaign.id,
@@ -47,10 +50,10 @@ def seed_certificates(db: Session):
             continue
 
         cert_code = f"VL-{now.year}-{campaign.id:03d}-{reg.user_id:04d}"
-        total_hours = Decimal(str(round(att.total_minutes / 60.0, 2)))
+        total_hours = Decimal(str(claim.approved_hours))
 
-        # Tạo 1 chứng chỉ REVOKED ở phần tử cuối (nếu có >= 3 bản ghi) để test trạng thái thu hồi
-        is_revoked = (idx == len(eligible_rows) - 1 and len(eligible_rows) >= 3)
+        # Tạo 1 chứng chỉ REVOKED ở phần tử cuối (nếu có >= 2 bản ghi) để test trạng thái thu hồi
+        is_revoked = (idx == len(eligible_rows) - 1 and len(eligible_rows) >= 2)
 
         cert = CertificateModel(
             certificate_code=cert_code,

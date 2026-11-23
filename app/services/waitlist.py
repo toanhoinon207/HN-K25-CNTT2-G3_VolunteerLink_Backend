@@ -8,7 +8,7 @@ from app.models.campaigns import CampaignModel
 from app.models.registration import RegistrationModel
 from app.models.users import UserModel
 from app.models.waitlist_entry import WaitlistEntryModel
-from app.services.notifications import create_notification
+from app.services.notifications import create_notification, notify_campaign_organizer
 
 
 def now_vietnam():
@@ -125,6 +125,13 @@ def respond_to_invite(db: Session, waitlist_id: int, user_id: int, response: str
         ).first()
         if registration and registration.status == "WAITLISTED":
             registration.status = "CANCELLED"
+        create_notification(
+            db=db,
+            user_id=user_id,
+            title="Lời mời từ danh sách chờ đã hết hạn",
+            content=f'Lời mời tham gia chiến dịch "{campaign.title}" đã quá hạn phản hồi 24 giờ.',
+            link="user-dashboard.html?tab=waitlist",
+        )
         _invite_next(db, campaign)
         db.commit()
         db.refresh(entry)
@@ -139,10 +146,24 @@ def respond_to_invite(db: Session, waitlist_id: int, user_id: int, response: str
             registration.status = "CANCELLED"
         entry.responded_at = now
         entry.updated_at = now
+        notify_campaign_organizer(
+            db,
+            campaign.id,
+            "Tình nguyện viên từ chối lời mời danh sách chờ",
+            f'Một tình nguyện viên đã từ chối lời mời tham gia chiến dịch "{campaign.title}".',
+            f"organizer-dashboard.html?tab=volunteers&campaign_id={campaign.id}",
+        )
         _invite_next(db, campaign)
     else:
         if campaign.status != "OPEN" or campaign.registration_deadline <= now:
             raise HTTPException(409, "Chiến dịch không còn nhận người tham gia")
+        registration = db.query(RegistrationModel).filter_by(
+            user_id=user_id, campaign_id=campaign.id
+        ).with_for_update().first()
+        if registration and registration.status == "REJECTED":
+            raise HTTPException(409, "Đơn đăng ký của bạn cho chiến dịch này đã bị từ chối trước đó")
+        if registration and registration.status == "APPROVED":
+            raise HTTPException(409, "Bạn đã được duyệt tham gia chiến dịch này")
         # Không được duyệt từ danh sách chờ nếu trùng lịch đã được duyệt.
         conflict = db.query(RegistrationModel.id).join(
             CampaignModel, RegistrationModel.campaign_id == CampaignModel.id
@@ -156,9 +177,6 @@ def respond_to_invite(db: Session, waitlist_id: int, user_id: int, response: str
             raise HTTPException(409, "Lịch chiến dịch bị trùng với chiến dịch đã được duyệt")
         if approved_count(db, campaign.id) >= campaign.max_participants:
             raise HTTPException(409, "Chiến dịch đã đủ số lượng")
-        registration = db.query(RegistrationModel).filter_by(
-            user_id=user_id, campaign_id=campaign.id
-        ).with_for_update().first()
         if registration is None:
             registration = RegistrationModel(
                 user_id=user_id, campaign_id=campaign.id, status="APPROVED"
@@ -174,6 +192,13 @@ def respond_to_invite(db: Session, waitlist_id: int, user_id: int, response: str
             db, user_id, "Đăng ký chiến dịch được duyệt",
             f'Đăng ký tham gia chiến dịch "{campaign.title}" đã được duyệt.',
             f"campaign_detail.html?id={campaign.id}",
+        )
+        notify_campaign_organizer(
+            db,
+            campaign.id,
+            "Tình nguyện viên chấp nhận lời mời danh sách chờ",
+            f'Tình nguyện viên đã chấp nhận lời mời tham gia chiến dịch "{campaign.title}".',
+            f"organizer-dashboard.html?tab=volunteers&campaign_id={campaign.id}",
         )
 
     db.commit()
@@ -193,25 +218,34 @@ def process_expired_invites(db: Session):
         campaign = db.query(CampaignModel).filter_by(id=campaign_id).with_for_update().first()
         if campaign is None:
             continue
-        entry = db.query(WaitlistEntryModel).filter(
+        expired_entries = db.query(WaitlistEntryModel).filter(
             WaitlistEntryModel.campaign_id == campaign_id,
             WaitlistEntryModel.status == "INVITED",
             WaitlistEntryModel.response_deadline <= now,
-        ).order_by(WaitlistEntryModel.position).with_for_update().first()
-        if entry is None:
+        ).order_by(WaitlistEntryModel.position, WaitlistEntryModel.id).with_for_update().all()
+        if not expired_entries:
             db.rollback()
             continue
-        entry.status = "EXPIRED"
-        registration = db.query(RegistrationModel).filter_by(
-            user_id=entry.user_id, campaign_id=campaign.id
-        ).first()
-        if registration and registration.status == "WAITLISTED":
-            registration.status = "CANCELLED"
-        entry.responded_at = now
-        entry.updated_at = now
-        _invite_next(db, campaign)
+        for entry in expired_entries:
+            entry.status = "EXPIRED"
+            registration = db.query(RegistrationModel).filter_by(
+                user_id=entry.user_id, campaign_id=campaign.id
+            ).first()
+            if registration and registration.status == "WAITLISTED":
+                registration.status = "CANCELLED"
+            entry.responded_at = now
+            entry.updated_at = now
+            create_notification(
+                db=db,
+                user_id=entry.user_id,
+                title="Lời mời từ danh sách chờ đã hết hạn",
+                content=f'Lời mời tham gia chiến dịch "{campaign.title}" đã quá hạn phản hồi 24 giờ.',
+                link="user-dashboard.html?tab=waitlist",
+            )
+            processed += 1
+        while _invite_next(db, campaign) is not None:
+            pass
         db.commit()
-        processed += 1
     return {"processed": processed}
 
 

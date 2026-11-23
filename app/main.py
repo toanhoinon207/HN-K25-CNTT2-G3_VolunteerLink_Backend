@@ -19,7 +19,7 @@ from app import models
 from app.core.config import settings
 from app.db.session import Base, engine, SessionLocal
 from app.services.waitlist import process_expired_invites
-from app.services.campaigns import complete_expired_checkout_campaigns
+from app.services.campaigns import sync_campaign_lifecycle
 
 # Import hàm seed dữ liệu
 from app.db.seed import run_seed
@@ -38,8 +38,9 @@ async def lifespan(app: FastAPI):
             f"[DB] Đã kết nối MySQL "
             f"{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
         )
-        print("[SEED] Bắt đầu thêm dữ liệu mẫu...")
-        run_seed()
+        if settings.AUTO_SEED_ON_STARTUP:
+            print("[SEED] Bắt đầu thêm dữ liệu mẫu...")
+            run_seed()
     except OperationalError as error:
         print("[DB] KHÔNG kết nối được MySQL!")
         print("[DB] Kiểm tra MySQL và file .env")
@@ -55,7 +56,7 @@ async def lifespan(app: FastAPI):
             def process_with_session():
                 db = SessionLocal()
                 try:
-                    complete_expired_checkout_campaigns(db)
+                    sync_campaign_lifecycle(db)
                     process_expired_invites(db)
                 finally:
                     db.close()
@@ -64,9 +65,9 @@ async def lifespan(app: FastAPI):
             except Exception:
                 logging.exception("Lỗi tác vụ cập nhật campaign/waitlist")
 
-    # Sau khi server khởi động lại, bắt kịp các mã CHECK-OUT đã hết hạn.
+    # Khi khởi động lại, đồng bộ cả hạn đăng ký và thời điểm hoàn thành.
     with SessionLocal() as db:
-        complete_expired_checkout_campaigns(db)
+        sync_campaign_lifecycle(db)
     expiry_task = asyncio.create_task(expire_waitlist_invites())
     try:
         yield

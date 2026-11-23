@@ -14,8 +14,8 @@ def health_check(db: Session = Depends(get_db)):
     try:
         db.execute(text("SELECT 1"))
         return {"status": "ok", "database": "connected"}
-    except Exception as error:  # noqa: BLE001 - muốn bắt mọi lỗi kết nối để báo ra
+    except Exception:  # noqa: BLE001 - muốn bắt mọi lỗi kết nối để báo ra
         return JSONResponse(
             status_code=503,
-            content={"status": "error", "database": "disconnected", "detail": str(error)},
+            content={"status": "error", "database": "disconnected", "detail": "Database connection failed"},
         )

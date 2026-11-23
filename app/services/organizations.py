@@ -1,5 +1,6 @@
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.organizations import OrganizationModel, OrganizationStatus
@@ -8,12 +9,15 @@ from app.schemas.organizations import OrganizationCreate, OrganizationUpdate
 
 from typing import Optional
 from app.models.attendances import AttendanceModel
+from app.models.hourclaims import HourClaimModel
 from app.models.registration import RegistrationModel
-from app.models.campaigns import CampaignModel
+from app.models.campaigns import CampaignModel, now_vietnam
+from app.models.waitlist_entry import WaitlistEntryModel
 from sqlalchemy import func
 from datetime import date, datetime
 
-from app.services.notifications import create_notification
+from app.services.notifications import create_notification, notify_active_admins
+from app.services.waitlist import promote_after_vacancy
 
 
 
@@ -63,7 +67,20 @@ def create_organization_service(
     )
 
     db.add(db_org)
-    db.commit()
+    db.flush()
+    notify_active_admins(
+        db, "Hồ sơ tổ chức mới chờ duyệt",
+        f'Tổ chức "{db_org.name}" vừa gửi yêu cầu xét duyệt.',
+        "admin-dashboard.html?tab=organizations",
+    )
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Tổ chức hoặc email của tổ chức đã tồn tại."
+        )
     db.refresh(db_org)
 
     return db_org
@@ -97,6 +114,12 @@ def update_my_organization_service(
             detail="Không tìm thấy thông tin tổ chức của bạn."
         )
 
+    if org.status == OrganizationStatus.PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Hồ sơ tổ chức đang chờ Quản trị viên xét duyệt; tạm thời không thể chỉnh sửa."
+        )
+
     if payload.email and payload.email != org.email:
         email_exist = get_organization_by_email(db, payload.email)
 
@@ -121,7 +144,14 @@ def update_my_organization_service(
         org.status = OrganizationStatus.PENDING
         org.rejection_reason = None
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email của tổ chức này đã được sử dụng."
+        )
     db.refresh(org)
 
     return org
@@ -231,6 +261,34 @@ class OrganizationService:
                 )
             org.status = OrganizationStatus.APPROVED
             user_owner.role = "ORGANIZER"
+            # Giải phóng các lời mời danh sách chờ đang mở của tài khoản khi nâng cấp lên ORGANIZER
+            now = now_vietnam()
+            active_waitlists = (
+                db.query(WaitlistEntryModel)
+                .filter(
+                    WaitlistEntryModel.user_id == user_owner.id,
+                    WaitlistEntryModel.status.in_(["WAITING", "INVITED"]),
+                )
+                .with_for_update()
+                .all()
+            )
+            invited_campaign_ids = set()
+            for wl in active_waitlists:
+                if wl.status == "INVITED":
+                    invited_campaign_ids.add(wl.campaign_id)
+                wl.status = "DECLINED"
+                wl.responded_at = now
+                wl.updated_at = now
+                reg = (
+                    db.query(RegistrationModel)
+                    .filter_by(user_id=user_owner.id, campaign_id=wl.campaign_id)
+                    .first()
+                )
+                if reg and reg.status == "WAITLISTED":
+                    reg.status = "CANCELLED"
+            for camp_id in invited_campaign_ids:
+                promote_after_vacancy(db, camp_id)
+
             create_notification(
                 db=db,
                 user_id=user_owner.id,
@@ -353,19 +411,30 @@ class OrganizerDashboardService:
             RegistrationModel, AttendanceModel.registration_id == RegistrationModel.id
         ).filter(
             RegistrationModel.campaign_id.in_(campaign_ids),
+            AttendanceModel.status == "PRESENT",
             AttendanceModel.check_in_at.isnot(None)
         ).count()
         
         attendance_rate = (total_attendances / approved_registrations * 100) if approved_registrations > 0 else 0.0
 
-        # 5. Tổng số giờ đóng góp đã xác minh
-        total_minutes_sum = db.query(func.sum(AttendanceModel.total_minutes)).join(
-            RegistrationModel, AttendanceModel.registration_id == RegistrationModel.id
+        # 5. Tổng số giờ đóng góp đã xác minh (từ HourClaim VERIFIED; nếu chiến dịch chưa tạo HourClaim thì tính điểm danh PRESENT hợp lệ)
+        verified_hours_sum = db.query(func.sum(HourClaimModel.approved_hours)).join(
+            RegistrationModel, HourClaimModel.registration_id == RegistrationModel.id
         ).filter(
-            RegistrationModel.campaign_id.in_(campaign_ids)
-        ).scalar() or 0
-        
-        total_verified_hours = round(float(total_minutes_sum) / 60.0, 2)
+            RegistrationModel.campaign_id.in_(campaign_ids),
+            HourClaimModel.status == "VERIFIED",
+        ).scalar()
+
+        if verified_hours_sum is not None:
+            total_verified_hours = round(float(verified_hours_sum), 2)
+        else:
+            total_minutes_sum = db.query(func.sum(AttendanceModel.total_minutes)).join(
+                RegistrationModel, AttendanceModel.registration_id == RegistrationModel.id
+            ).filter(
+                RegistrationModel.campaign_id.in_(campaign_ids),
+                AttendanceModel.status == "PRESENT",
+            ).scalar() or 0
+            total_verified_hours = round(float(total_minutes_sum) / 60.0, 2)
 
         # 6. Top 10 tình nguyện viên
         top_volunteers_query = db.query(
@@ -378,6 +447,7 @@ class OrganizerDashboardService:
          .join(AttendanceModel, AttendanceModel.registration_id == RegistrationModel.id)\
          .filter(
              RegistrationModel.campaign_id.in_(campaign_ids),
+             AttendanceModel.status == "PRESENT",
              AttendanceModel.check_in_at.isnot(None)
          )\
          .group_by(UserModel.id, UserModel.full_name, UserModel.email)\

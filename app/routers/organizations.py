@@ -137,6 +137,8 @@ def get_organizer_dashboard(
             "message": "Thành công",
             "data": stats
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Không thể tải thống kê tổ chức.")
     

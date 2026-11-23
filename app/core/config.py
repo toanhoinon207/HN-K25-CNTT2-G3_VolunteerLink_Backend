@@ -31,6 +31,17 @@ class Settings(BaseSettings):
     # Chuỗi các origin cách nhau bằng dấu phẩy, hoặc "*"
     CORS_ORIGINS: str = "*"
 
+    # ---- SMTP (Đặt lại mật khẩu qua email) ----
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""
+    SMTP_USE_TLS: bool = True
+    FRONTEND_BASE_URL: str = "http://127.0.0.1:5500"
+    PASSWORD_RESET_EXPIRE_MINUTES: int = 15
+    AUTO_SEED_ON_STARTUP: bool = True
+
     @property
     def database_url(self) -> str:
         # mysql+pymysql://user:password@host:port/database

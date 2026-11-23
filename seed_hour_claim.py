@@ -70,7 +70,7 @@ def seed_hour_claims(db: Session):
             user_id=reg.user_id,
             actual_hours=actual_hours,
             claimed_hours=actual_hours,
-            evidence_url=f"/uploads/evidences/claim_{reg.id}.jpg",
+            evidence_url=f"https://volunteerlink.vn/evidences/claim_{reg.id}.jpg",
             note=f"Đề nghị xác nhận giờ tham gia chiến dịch {campaign.title}",
         )
 
@@ -99,21 +99,21 @@ def seed_hour_claims(db: Session):
             claim.verified_at = now - timedelta(days=2)
             claim.rejection_reason = "Thiếu minh chứng làm thêm giờ."
             claim.appeal_reason = "Em có ở lại hỗ trợ kiểm kê vật tư, đính kèm ảnh chụp biên bản."
-            claim.appeal_evidence_url = f"/uploads/evidences/appeal_{reg.id}.jpg"
+            claim.appeal_evidence_url = f"https://volunteerlink.vn/evidences/appeal_{reg.id}.jpg"
             claim.appeal_status = "PENDING"
 
         elif scenario == "REJECTED_APPEAL_ACCEPTED":
-            claim.status = "REJECTED"
-            claim.claimed_hours = actual_hours + Decimal("1.00")
+            claim.status = "VERIFIED"
+            claim.claimed_hours = actual_hours
             claim.verified_by = organizer.id if organizer else None
             claim.verified_at = now - timedelta(days=5)
-            claim.rejection_reason = "Chưa rõ thời gian kết thúc."
+            claim.rejection_reason = None
             claim.appeal_reason = "Đính kèm xác nhận của trưởng nhóm hậu cần."
-            claim.appeal_evidence_url = f"/uploads/evidences/appeal_{reg.id}.jpg"
+            claim.appeal_evidence_url = f"https://volunteerlink.vn/evidences/appeal_{reg.id}.jpg"
             claim.appeal_status = "ACCEPTED"
             claim.admin_id = admin.id if admin else None
-            claim.admin_note = "Đã đối chiếu biên bản, chấp nhận cộng thêm 1 giờ."
-            claim.approved_hours = claim.claimed_hours
+            claim.admin_note = "Đã đối chiếu biên bản, chấp nhận đủ giờ điểm danh thực tế."
+            claim.approved_hours = actual_hours
             claim.resolved_at = now - timedelta(days=1)
 
         elif scenario == "REJECTED_APPEAL_REJECTED":
@@ -123,11 +123,11 @@ def seed_hour_claims(db: Session):
             claim.verified_at = now - timedelta(days=6)
             claim.rejection_reason = "Minh chứng không hợp lệ."
             claim.appeal_reason = "Xin xem xét lại giờ tham gia."
-            claim.appeal_evidence_url = f"/uploads/evidences/appeal_{reg.id}.jpg"
+            claim.appeal_evidence_url = f"https://volunteerlink.vn/evidences/appeal_{reg.id}.jpg"
             claim.appeal_status = "REJECTED"
             claim.admin_id = admin.id if admin else None
             claim.admin_note = "Ảnh minh chứng không khớp thời gian chiến dịch."
-            claim.approved_hours = actual_hours
+            claim.approved_hours = None
             claim.resolved_at = now - timedelta(days=1)
 
         db.add(claim)

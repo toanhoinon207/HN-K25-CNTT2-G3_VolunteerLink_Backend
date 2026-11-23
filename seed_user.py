@@ -42,14 +42,14 @@ def seed_users(db: Session):
             "full_name": "Phạm Thu Organizer 4",
             "email": "organizer4@gmail.com",
             "phone": "0902000004",
-            "role": "ORGANIZER",
+            "role": "USER",
             "status": "ACTIVE",
         },
         {
             "full_name": "Hoàng Đức Organizer 5",
             "email": "organizer5@gmail.com",
             "phone": "0902000005",
-            "role": "ORGANIZER",
+            "role": "USER",
             "status": "ACTIVE",
         },
         {

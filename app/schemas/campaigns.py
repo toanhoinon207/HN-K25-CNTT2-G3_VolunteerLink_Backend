@@ -2,7 +2,18 @@
 from datetime import datetime
 from typing import Optional, Literal
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, computed_field, field_validator
+
+
+def _validate_campaign_image_url(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    cleaned = v.strip()
+    if not cleaned:
+        return None
+    if not cleaned.startswith(("http://", "https://", "/")):
+        raise ValueError("URL ảnh chiến dịch phải dùng http://, https:// hoặc đường dẫn nội bộ.")
+    return cleaned
 
 
 CampaignStatus = Literal[
@@ -19,7 +30,7 @@ class CampaignCreate(BaseModel):
 
     title: str = Field(min_length=1, max_length=255)
     description: str = Field(min_length=1)
-    image_url: Optional[str] = None
+    image_url: Optional[str] = Field(default=None, max_length=500)
 
     category: str = Field(min_length=1, max_length=100)
     location: str = Field(min_length=1, max_length=255)
@@ -32,14 +43,19 @@ class CampaignCreate(BaseModel):
     requirements: Optional[str] = None
     estimated_hours: float = Field(gt=0)
 
+    @field_validator("image_url")
+    @classmethod
+    def check_image_url(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_campaign_image_url(v)
+
 
 class CampaignUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    image_url: Optional[str] = None
+    title: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    description: Optional[str] = Field(default=None, min_length=1)
+    image_url: Optional[str] = Field(default=None, max_length=500)
 
-    category: Optional[str] = None
-    location: Optional[str] = None
+    category: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    location: Optional[str] = Field(default=None, min_length=1, max_length=255)
 
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
@@ -48,6 +64,11 @@ class CampaignUpdate(BaseModel):
     max_participants: Optional[int] = Field(None, gt=0)
     requirements: Optional[str] = None
     estimated_hours: Optional[float] = Field(None, gt=0)
+
+    @field_validator("image_url")
+    @classmethod
+    def check_image_url(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_campaign_image_url(v)
 
 
 class CampaignStatusUpdate(BaseModel):
@@ -80,6 +101,12 @@ class CampaignResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @computed_field
+    @property
+    def display_status(self) -> str:
+        from app.services.campaigns import derive_display_status
+        return derive_display_status(self.status, self.start_time, self.end_time, self.registration_deadline)
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -101,6 +128,10 @@ class CampaignListItemResponse(BaseModel):
     status: Literal["OPEN", "CLOSED", "COMPLETED"]
     description: str
     location: str
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    registration_deadline: Optional[datetime] = None
+    max_participants: Optional[int] = None
     organization: OrganizationPublicResponse
 
     model_config = ConfigDict(from_attributes=True)
@@ -143,6 +174,11 @@ class CampaignDetailResponse(BaseModel):
 
 class CampaignPendingItemResponse(CampaignResponse):
     organization: OrganizationPublicResponse
+
+
+class AdminCampaignDetailResponse(CampaignDetailResponse):
+    status: CampaignStatus
+    reason: Optional[str] = None
 
 
 class CampaignReviewRequest(BaseModel):

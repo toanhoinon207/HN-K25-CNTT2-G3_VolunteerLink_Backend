@@ -1,7 +1,18 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 import enum
+
+
+def _validate_safe_url(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    cleaned = v.strip()
+    if not cleaned:
+        return None
+    if not cleaned.startswith(("http://", "https://", "/")):
+        raise ValueError("URL phải bắt đầu bằng http://, https:// hoặc /.")
+    return cleaned
 
 
 class OrganizationStatus(str, enum.Enum):
@@ -20,6 +31,11 @@ class OrganizationBase(BaseModel):
     phone: str = Field(..., max_length=20, description="Số điện thoại")
     document_url: Optional[str] = Field(None, max_length=500, description="Tài liệu xác thực")
 
+    @field_validator("logo_url", "document_url")
+    @classmethod
+    def check_urls(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_safe_url(v)
+
 class OrganizationCreate(OrganizationBase):
     pass
 
@@ -31,6 +47,11 @@ class OrganizationUpdate(BaseModel):
     email: Optional[EmailStr] = None
     phone: Optional[str] = Field(None, max_length=20)
     document_url: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("logo_url", "document_url")
+    @classmethod
+    def check_urls(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_safe_url(v)
 
 class OrganizationStatusUpdate(BaseModel):
     status: OrganizationStatus

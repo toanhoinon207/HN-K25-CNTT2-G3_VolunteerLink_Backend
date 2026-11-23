@@ -3,10 +3,10 @@
 Certificate issuance is delegated to the validated service; no direct issuance
 logic is reintroduced from develop.
 """
-from typing import Literal, Optional
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.session import get_db
@@ -15,7 +15,6 @@ from app.models.certificate import CertificateModel
 from app.models.users import UserModel
 from app.schemas.certificates import (
     CertificateDetails,
-    CertificateResponse,
     IssueCertificate,
 )
 from app.services.certificates import (
@@ -23,9 +22,7 @@ from app.services.certificates import (
     get_issued_certificates,
     get_my_certificates,
     issue_certificate as issue_certificate_service,
-    revoke_certificate as revoke_certificate_service,
 )
-from app.services.notifications import create_notification
 
 router = APIRouter(prefix="/certificates", tags=["Certificates"])
 
@@ -35,10 +32,6 @@ class CertificatePublicVerification(BaseModel):
     campaign_title: str
     total_hours: float
     status: Literal["ACTIVE", "REVOKED"]
-
-
-class CertificateRevokeBody(BaseModel):
-    revoked_reason: str = Field(min_length=1, max_length=1000)
 
 
 # USER: original endpoint used by the current frontend.
@@ -106,46 +99,3 @@ def verify_certificate(
         total_hours=float(certificate.total_hours),
         status=certificate.status,
     )
-
-
-# ADMIN: list all certificates (develop endpoint).
-@router.get("", response_model=list[CertificateResponse])
-def list_all_certificates(
-    certificate_status: Optional[Literal["ACTIVE", "REVOKED"]] = Query(default=None, alias="status"),
-    campaign_id: Optional[int] = Query(default=None, gt=0),
-    db: Session = Depends(get_db),
-    current_user: UserModel = Depends(require_role("ADMIN")),
-):
-    query = db.query(CertificateModel)
-    if certificate_status is not None:
-        query = query.filter(CertificateModel.status == certificate_status)
-    if campaign_id is not None:
-        query = query.filter(CertificateModel.campaign_id == campaign_id)
-    return query.order_by(CertificateModel.id.desc()).all()
-
-
-# ADMIN: legacy revoke endpoint from develop.
-# Note: /api/admin/certificates/{id}/revoke also exists; consider
-# consolidating into one service after the merge.
-@router.patch("/{certificate_id}/revoke", response_model=CertificateResponse)
-def revoke_certificate_api(
-    certificate_id: int,
-    data: CertificateRevokeBody,
-    db: Session = Depends(get_db),
-    current_user: UserModel = Depends(require_role("ADMIN")),
-):
-    reason = data.revoked_reason.strip()
-    if not reason:
-        raise HTTPException(status_code=400, detail="Vui lòng nhập lý do thu hồi chứng chỉ.")
-
-    try:
-        return revoke_certificate_service(
-            db=db,
-            certificate_id=certificate_id,
-            admin_id=current_user.id,
-            reason=reason,
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc

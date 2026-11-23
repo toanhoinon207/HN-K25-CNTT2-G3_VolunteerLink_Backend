@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, UniqueConstraint
 from app.db.session import Base
 from sqlalchemy.orm import relationship
 
@@ -11,6 +11,9 @@ def now_vietnam():
 
 class RegistrationModel(Base):
     __tablename__ = "registrations"
+    __table_args__ = (
+        UniqueConstraint("user_id", "campaign_id", name="uq_registration_user_campaign"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable = False)

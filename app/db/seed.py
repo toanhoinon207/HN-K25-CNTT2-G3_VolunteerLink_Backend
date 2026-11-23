@@ -4,10 +4,16 @@
 (với mật khẩu chung 12345678 và hash bcrypt riêng cho từng tài khoản).
 """
 from app.db.session import SessionLocal
-from seed_all import run_all_seeds
 
 
 def run_seed():
+    try:
+        from seed_all import run_all_seeds
+    except ModuleNotFoundError as exc:
+        if exc.name != "seed_all":
+            raise
+        print("[SEED] Không có seed_all.py, bỏ qua nạp dữ liệu mẫu.")
+        return
     db = SessionLocal()
     try:
         run_all_seeds(db)

@@ -1,5 +1,6 @@
 
 from sqlalchemy.orm import Session
+from fastapi import HTTPException
 from app.models.notifications import NotificationModel
 
 
@@ -108,3 +109,23 @@ def mark_all_notifications_read(
     db.commit()
 
     return updated_count
+
+
+def notify_active_admins(db: Session, title: str, content: str, link: str | None = None):
+    from app.models.users import UserModel
+    admins = db.query(UserModel.id).filter(
+        UserModel.role == "ADMIN", UserModel.status == "ACTIVE"
+    ).all()
+    for (admin_id,) in admins:
+        create_notification(db, admin_id, title, content, link)
+
+
+def notify_campaign_organizer(db: Session, campaign_id: int,
+                              title: str, content: str, link: str | None = None):
+    from app.models.campaigns import CampaignModel
+    from app.models.organizations import OrganizationModel
+    owner = (db.query(OrganizationModel.owner_id)
+        .join(CampaignModel, CampaignModel.organization_id == OrganizationModel.id)
+        .filter(CampaignModel.id == campaign_id).first())
+    if owner:
+        create_notification(db, owner[0], title, content, link)
