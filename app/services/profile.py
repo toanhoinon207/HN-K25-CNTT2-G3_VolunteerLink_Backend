@@ -121,8 +121,15 @@ def update_user_profile(
 
 ALLOWED_AVATAR_TYPES = {
     "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
+}
+ALLOWED_AVATAR_EXTENSIONS = {
+    ".jpg": ".jpg",
+    ".jpeg": ".jpg",
+    ".png": ".png",
+    ".webp": ".webp",
 }
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
 AVATAR_UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads" / "avatars"
@@ -130,7 +137,10 @@ AVATAR_UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads" / 
 
 def upload_user_avatar(db: Session, user: UserModel, file: UploadFile):
     """Lưu file ảnh đại diện mới và cập nhật avatar_url cho người dùng."""
-    ext = ALLOWED_AVATAR_TYPES.get((file.content_type or "").lower())
+    content_type = (file.content_type or "").lower().strip()
+    ext = ALLOWED_AVATAR_TYPES.get(content_type)
+    if not ext and file.filename:
+        ext = ALLOWED_AVATAR_EXTENSIONS.get(Path(file.filename).suffix.lower())
     if not ext:
         raise HTTPException(
             status_code=400,

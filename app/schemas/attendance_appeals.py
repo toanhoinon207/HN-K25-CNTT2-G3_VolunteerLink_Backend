@@ -55,6 +55,18 @@ class AttendanceAppealResponse(BaseModel):
     id: int
     registration_id: int
     user_id: int
+    user_name: str | None = None
+    user_email: str | None = None
+    campaign_id: int | None = None
+    campaign_title: str | None = None
+    organization_name: str | None = None
+    campaign_start_time: datetime | None = None
+    campaign_end_time: datetime | None = None
+    campaign_estimated_hours: float | None = None
+    current_attendance_status: str | None = None
+    current_check_in_at: datetime | None = None
+    current_check_out_at: datetime | None = None
+    current_total_minutes: int | None = None
     reason: str
     evidence_url: str | None
     status: str
@@ -63,6 +75,7 @@ class AttendanceAppealResponse(BaseModel):
     reviewed_at: datetime | None
     escalation_reason: str | None = None
     escalated_at: datetime | None = None
+    sla_deadline: datetime | None = None
     admin_id: int | None = None
     admin_note: str | None = None
     admin_resolved_at: datetime | None = None
