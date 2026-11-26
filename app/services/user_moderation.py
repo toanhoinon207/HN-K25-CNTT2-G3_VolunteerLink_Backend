@@ -182,7 +182,13 @@ def unlock_user_service(
             detail="Tài khoản này đang hoạt động bình thường"
         )
 
-    clean_reason = (reason or "Mở khóa tài khoản sau khi xem xét").strip()
+    if reason is not None and not reason.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Vui lòng cung cấp lý do hợp lệ khi mở khóa tài khoản"
+        )
+
+    clean_reason = reason.strip() if reason is not None else "Mở khóa tài khoản sau khi xem xét"
 
     # Cập nhật trạng thái
     user.status = "ACTIVE"

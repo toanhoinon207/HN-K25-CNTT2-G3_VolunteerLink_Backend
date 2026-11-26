@@ -58,6 +58,9 @@ INSERT INTO organizations (id, name, description, logo_url, address, email, phon
 -- ----------------------------------------------------------------------------
 -- 5. CAMPAIGNS (DRAFT, PENDING, OPEN, CLOSED, COMPLETED, CANCELLED)
 -- ----------------------------------------------------------------------------
+-- ----------------------------------------------------------------------------
+-- 5. CAMPAIGNS (DRAFT, PENDING, OPEN, CLOSED, COMPLETED, CANCELLED)
+-- ----------------------------------------------------------------------------
 INSERT INTO campaigns (
     id, organization_id, title, description, image_url, category, location,
     start_time, end_time, registration_deadline, max_participants,
@@ -67,7 +70,7 @@ INSERT INTO campaigns (
 -- #1: OPEN hôm nay (để test điểm danh check-in / check-out trực tiếp với mã LIVE26)
 (1, 1, 'Dọn vệ sinh Hồ Gươm',
  'Chiến dịch Dọn vệ sinh Hồ Gươm nhằm bảo vệ cảnh quan đô thị và lan tỏa ý thức giữ gìn môi trường.',
- NULL, 'ENVIRONMENT', 'Hoàn Kiếm, Hà Nội',
+ 'https://images.unsplash.com/photo-1758599668547-2b1192c10abb', 'ENVIRONMENT', 'Hoàn Kiếm, Hà Nội',
  TIMESTAMP(CURDATE(), '00:00:00'),
  TIMESTAMP(CURDATE(), '23:59:59'),
  DATE_SUB(NOW(), INTERVAL 2 HOUR),
@@ -78,7 +81,7 @@ INSERT INTO campaigns (
 -- #2: OPEN sắp diễn ra (để test đăng ký & waitlist: max_participants=1 đã đủ chỗ)
 (2, 2, 'Trồng cây xanh tại Ba Vì',
  'Chiến dịch Trồng cây xanh tại Ba Vì góp phần phủ xanh đồi trọc và nâng cao nhận thức sinh thái.',
- NULL, 'ENVIRONMENT', 'Ba Vì, Hà Nội',
+ 'https://images.unsplash.com/photo-1779049624287-90ff257b2fc7', 'ENVIRONMENT', 'Ba Vì, Hà Nội',
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 10 DAY), '08:00:00'),
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 10 DAY), '12:00:00'),
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 8 DAY),  '23:59:00'),
@@ -89,7 +92,7 @@ INSERT INTO campaigns (
 -- #3: OPEN sắp diễn ra (còn nhiều chỗ)
 (3, 3, 'Dạy học cho trẻ em khó khăn',
  'Chiến dịch hỗ trợ ôn tập kiến thức cơ bản cho các em nhỏ có hoàn cảnh khó khăn.',
- NULL, 'EDUCATION', 'Long Biên, Hà Nội',
+ 'https://images.unsplash.com/photo-1499808009608-201e28a68a5a', 'EDUCATION', 'Long Biên, Hà Nội',
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 14 DAY), '08:00:00'),
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 14 DAY), '12:00:00'),
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 12 DAY), '23:59:00'),
@@ -100,7 +103,7 @@ INSERT INTO campaigns (
 -- #4: OPEN sắp diễn ra (lĩnh vực HEALTH)
 (4, 1, 'Ngày hội hiến máu nhân đạo',
  'Chiến dịch hỗ trợ điều phối, chăm sóc người hiến máu và truyền thông nâng cao nhận thức.',
- NULL, 'HEALTH', 'Đống Đa, Hà Nội',
+ 'https://images.unsplash.com/photo-1536856136534-bb679c52a9aa', 'HEALTH', 'Đống Đa, Hà Nội',
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 18 DAY), '08:00:00'),
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 18 DAY), '12:00:00'),
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 16 DAY), '23:59:00'),
@@ -111,7 +114,7 @@ INSERT INTO campaigns (
 -- #5: OPEN sắp diễn ra (lĩnh vực COMMUNITY)
 (5, 3, 'Bữa cơm yêu thương',
  'Chuẩn bị và trao tặng suất ăn miễn phí cho bệnh nhân và người lao động khó khăn.',
- NULL, 'COMMUNITY', 'Hai Bà Trưng, Hà Nội',
+ 'https://images.unsplash.com/photo-1517486808906-6ca8b3f04846', 'COMMUNITY', 'Hai Bà Trưng, Hà Nội',
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 7 DAY), '09:00:00'),
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 7 DAY), '13:00:00'),
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 5 DAY), '23:59:00'),
@@ -122,7 +125,7 @@ INSERT INTO campaigns (
 -- #6: PENDING (chờ Admin duyệt)
 (6, 2, 'Tiếp sức mùa thi',
  'Hỗ trợ thí sinh và phụ huynh tại các điểm thi trên địa bàn quận Cầu Giấy.',
- NULL, 'EDUCATION', 'Cầu Giấy, Hà Nội',
+ 'https://images.unsplash.com/photo-1488161628813-04466f872be2', 'EDUCATION', 'Cầu Giấy, Hà Nội',
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 22 DAY), '07:00:00'),
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 22 DAY), '11:30:00'),
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 20 DAY), '23:59:00'),
@@ -133,7 +136,7 @@ INSERT INTO campaigns (
 -- #7: DRAFT (bản nháp của Organizer)
 (7, 1, 'Tặng sách cho trẻ em vùng cao',
  'Quyên góp, phân loại và đóng gói sách giáo khoa gửi tới học sinh vùng cao.',
- NULL, 'EDUCATION', 'Sa Pa, Lào Cai',
+ 'https://images.unsplash.com/photo-1559305289-4c31700ba9cb', 'EDUCATION', 'Sa Pa, Lào Cai',
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 30 DAY), '08:00:00'),
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 30 DAY), '16:00:00'),
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 25 DAY), '23:59:00'),
@@ -144,7 +147,7 @@ INSERT INTO campaigns (
 -- #8: CLOSED (đã đóng đăng ký, sắp/đã qua hạn đăng ký)
 (8, 2, 'Chạy bộ gây quỹ từ thiện',
  'Điều phối cung đường chạy bộ gây quỹ ủng hộ trẻ em khuyết tật.',
- NULL, 'HEALTH', 'Tây Hồ, Hà Nội',
+ 'https://images.unsplash.com/photo-1613936360976-8f35cf0e5461', 'HEALTH', 'Tây Hồ, Hà Nội',
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 3 DAY), '06:30:00'),
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 3 DAY), '10:30:00'),
  DATE_SUB(NOW(), INTERVAL 1 DAY),
@@ -155,7 +158,7 @@ INSERT INTO campaigns (
 -- #9: COMPLETED (đã hoàn thành - dùng cho Attendance, Appeals, HourClaims, Certificates)
 (9, 1, 'Ngày hội tái chế rác thải',
  'Thu gom, phân loại rác thải nhựa và hướng dẫn người dân tái chế tại khu dân cư.',
- NULL, 'ENVIRONMENT', 'Nam Từ Liêm, Hà Nội',
+ 'https://images.unsplash.com/photo-1611284446314-60a58ac0deb9', 'ENVIRONMENT', 'Nam Từ Liêm, Hà Nội',
  TIMESTAMP(DATE_SUB(CURDATE(), INTERVAL 10 DAY), '08:00:00'),
  TIMESTAMP(DATE_SUB(CURDATE(), INTERVAL 10 DAY), '12:00:00'),
  TIMESTAMP(DATE_SUB(CURDATE(), INTERVAL 12 DAY), '23:59:00'),
@@ -166,7 +169,7 @@ INSERT INTO campaigns (
 -- #10: COMPLETED (đã hoàn thành)
 (10, 3, 'Trung thu cho em',
  'Tổ chức đêm hội trăng rằm, rước đèn và trao quà cho trẻ em tại nhà văn hóa.',
- NULL, 'COMMUNITY', 'Hà Đông, Hà Nội',
+ 'https://images.unsplash.com/photo-1681034494427-35b291a34385', 'COMMUNITY', 'Hà Đông, Hà Nội',
  TIMESTAMP(DATE_SUB(CURDATE(), INTERVAL 20 DAY), '17:00:00'),
  TIMESTAMP(DATE_SUB(CURDATE(), INTERVAL 20 DAY), '21:00:00'),
  TIMESTAMP(DATE_SUB(CURDATE(), INTERVAL 22 DAY), '23:59:00'),
@@ -177,14 +180,13 @@ INSERT INTO campaigns (
 -- #11: CANCELLED (đã hủy có lý do)
 (11, 1, 'Chiến dịch xanh cuối tuần',
  'Dọn dẹp khu vực ven sông Hồng và trồng hoa ven đường.',
- NULL, 'ENVIRONMENT', 'Gia Lâm, Hà Nội',
+ 'https://images.unsplash.com/photo-1580600301354-0ce8faef576c', 'ENVIRONMENT', 'Gia Lâm, Hà Nội',
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 28 DAY), '08:00:00'),
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 28 DAY), '12:00:00'),
  TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 26 DAY), '23:59:00'),
  20, 'Trang phục gọn gàng, mang găng tay bảo hộ.', 4.0,
  'CANCELLED', 'Chiến dịch tạm hủy do điều chỉnh kế hoạch phối hợp địa phương.', DATE_SUB(NOW(), INTERVAL 12 DAY), DATE_SUB(NOW(), INTERVAL 4 DAY),
  NULL, NULL, NULL);
-
 -- ----------------------------------------------------------------------------
 -- 6. ATTENDANCE CODE ISSUES (Lịch sử cấp mã điểm danh)
 -- ----------------------------------------------------------------------------

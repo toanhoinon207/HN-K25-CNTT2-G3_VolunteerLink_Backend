@@ -57,6 +57,7 @@ def _invite_next(db: Session, campaign: CampaignModel):
         content=f'Chiến dịch "{campaign.title}" đã có chỗ. Vui lòng phản hồi lời mời trong vòng 24 giờ.',
         link=f"campaign_detail.html?id={campaign.id}",
     )
+    db.flush()
     return entry
 
 
